@@ -666,6 +666,18 @@ namespace TVCast.Tests
             Equal(1032, r[3], "too tall: fits the main screen");
         }
 
+        static void TestWindowFoundWhereItReallyIs()
+        {
+            int[] virt = { 1920, 0, 2560, 1440 };
+            int[] onVirtual = { 1912, -8, 2576, 1456 }, normalOnMain = { 200, 150, 900, 700 };
+            // maximized (3) or snapped (1) on the virtual screen, normal position still on the main one
+            True(WindowMover.CentreOn(WindowMover.WhereItIs(3, onVirtual, normalOnMain), virt), "a maximized window is where it is shown");
+            True(WindowMover.CentreOn(WindowMover.WhereItIs(1, new[] { 1920, 0, 1280, 1440 }, normalOnMain), virt), "a snapped window is where it is shown");
+            // minimized (2): its rectangle is off screen, the restored position decides
+            True(WindowMover.CentreOn(WindowMover.WhereItIs(2, new[] { -32000, -32000, 160, 28 }, new[] { 2200, 300, 900, 700 }), virt), "a minimized window by its restored position");
+            True(!WindowMover.CentreOn(WindowMover.WhereItIs(2, new[] { -32000, -32000, 160, 28 }, normalOnMain), virt), "a minimized window that belongs on the main screen stays");
+        }
+
         static void TestGpuPreferenceValue()
         {
             Equal(1, MainForm.ParseGpuPreference("GpuPreference=1;"), "power saving");

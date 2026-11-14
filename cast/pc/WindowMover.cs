@@ -36,13 +36,40 @@ namespace TVCast
         /// Moves the windows whose (normal) position is on the screen (left, top, width, height) to
         /// the main screen's work area. Returns how many were moved.
         /// </summary>
-        public static int MoveHome(int left, int top, int width, int height)
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
+
+        /// <summary>what MoveHome did: windows moved, windows Windows refused to move (programs
+        /// started as administrator), and one line per window for the log</summary>
+        public class HomeResult
+        {
+            public int Moved, Refused;
+            public readonly List<string> Log = new List<string>();
+        }
+
+        /// <summary>
+        /// Where a window really is: a minimized one by its normal (restored) position, every other
+        /// one by its actual rectangle. A maximized or snapped window's normal position can still be
+        /// on the main screen while the window itself is on the other one. Pure, unit-tested.
+        /// </summary>
+        internal static int[] WhereItIs(int showCmd, int[] actual, int[] normal)
+        {
+            return showCmd == 2 /* SW_SHOWMINIMIZED */ ? normal : actual;
+        }
+
+        /// <summary>
+        /// Moves the windows that are on the screen (left, top, width, height) to the main screen's
+        /// work area, at the same relative spot; maximized ones are maximized again there, minimized
+        /// ones come back there when restored.
+        /// </summary>
+        public static HomeResult MoveHome(int left, int top, int width, int height)
         {
             System.Drawing.Rectangle w = System.Windows.Forms.Screen.PrimaryScreen.WorkingArea;
             int[] from = { left, top, width, height }, to = { w.Left, w.Top, w.Width, w.Height };
             var found = new List<IntPtr>();
             EnumWindows((h, l) => { found.Add(h); return true; }, IntPtr.Zero);
-            int moved = 0;
+            var result = new HomeResult();
             foreach (IntPtr h in found)
             {
                 try
@@ -52,18 +79,51 @@ namespace TVCast
                     int cloaked;
                     if (DwmGetWindowAttribute(h, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) continue; // hidden store apps
                     var p = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
-                    if (!GetWindowPlacement(h, ref p)) continue;
+                    RECT a;
+                    if (!GetWindowPlacement(h, ref p) || !GetWindowRect(h, out a)) continue;
                     RECT r = p.normalPosition;
-                    int[] now = { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
-                    if (!CentreOn(now, from)) continue;
-                    int[] n = MapRect(now, from, to);
-                    p.normalPosition = new RECT { Left = n[0], Top = n[1], Right = n[0] + n[2], Bottom = n[1] + n[3] };
-                    p.flags = 0;
-                    if (SetWindowPlacement(h, ref p)) moved++;
+                    // normalPosition is in work-area coordinates (from the main screen's work area)
+                    int[] normal = { r.Left + w.Left, r.Top + w.Top, r.Right - r.Left, r.Bottom - r.Top };
+                    int[] actual = { a.Left, a.Top, a.Right - a.Left, a.Bottom - a.Top };
+                    if (!CentreOn(WhereItIs(p.showCmd, actual, normal), from)) continue;
+                    var title = new System.Text.StringBuilder(80);
+                    GetWindowText(h, title, 80);
+                    bool ok;
+                    string how;
+                    if (p.showCmd == 2) // minimized: only its restored position moves
+                    {
+                        int[] n = MapRect(normal, from, to);
+                        p.normalPosition = new RECT { Left = n[0] - w.Left, Top = n[1] - w.Top, Right = n[0] + n[2] - w.Left, Bottom = n[1] + n[3] - w.Top };
+                        ok = SetWindowPlacement(h, ref p);
+                        how = "minimized";
+                    }
+                    else if (p.showCmd == 3) // maximized: restore, move, maximize on the main screen
+                    {
+                        ShowWindow(h, 9 /* SW_RESTORE */);
+                        GetWindowPlacement(h, ref p);
+                        r = p.normalPosition;
+                        int[] back = { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
+                        int[] backOnScreen = { back[0] + w.Left, back[1] + w.Top, back[2], back[3] };
+                        int[] n = CentreOn(backOnScreen, from) ? MapRect(backOnScreen, from, to) : backOnScreen;
+                        p.normalPosition = new RECT { Left = n[0] - w.Left, Top = n[1] - w.Top, Right = n[0] + n[2] - w.Left, Bottom = n[1] + n[3] - w.Top };
+                        p.flags = 0;
+                        p.showCmd = 1;
+                        ok = SetWindowPlacement(h, ref p);
+                        ShowWindow(h, 3 /* SW_MAXIMIZE */);
+                        how = "maximized";
+                    }
+                    else // normal or snapped to a side: move what is shown
+                    {
+                        int[] n = MapRect(actual, from, to);
+                        ok = SetWindowPos(h, IntPtr.Zero, n[0], n[1], n[2], n[3], 0x14 /* SWP_NOZORDER | SWP_NOACTIVATE */);
+                        how = "normal";
+                    }
+                    if (ok) result.Moved++; else result.Refused++;
+                    result.Log.Add("\"" + title + "\" " + how + (ok ? " moved home" : " refused (" + Marshal.GetLastWin32Error() + ")"));
                 }
                 catch (Exception) { } // a window that went away meanwhile
             }
-            return moved;
+            return result;
         }
 
         [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);

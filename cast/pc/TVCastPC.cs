@@ -1889,7 +1889,7 @@ namespace TVCast
         public static string Title, TvLabel, Find, Sound, Fps120, Show, Stop, ShowingWord;
         public static string AppHint, WebHint, ScreensSection, ScreensHint;
         public static string Subtitle, TvSection, IpadSection, OpenSafari, CodeCaption, ScreenLabel, ScreenMain, UsbCable, Moved;
-        public static string PairAsk, PairWaiting, PairRefused, OldReceiver;
+        public static string PairAsk, PairWaiting, PairRefused, OldReceiver, WindowsRefused;
         public static string Searching, Found, NotFound, Stopped, EnterIp, Showing, Software;
         public static string NoScreen, NoOutput1, ScreenFormat, NoEncoder, EncoderError;
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
@@ -1968,6 +1968,8 @@ namespace TVCast
             PairRefused = lt ? "Kodas nesutapo: rodymas sustabdytas" : "The code did not match: casting stopped";
             OldReceiver = lt ? "Imtuvas neatsako. Jei jame sena CastLink versija, atnaujink ją (ji nešifruoja)."
                 : "The receiver does not answer. If it has an older CastLink, update it (that one does not encrypt).";
+            WindowsRefused = lt ? "Windows neleido perkelti {0} lang. į pagrindinį ekraną (programos paleistos administratoriaus teisėmis). Perkelk jas Win+Shift+←."
+                : "Windows did not let {0} window(s) move to the main screen (programs run as administrator). Move them with Win+Shift+←.";
             ScreenMain = lt ? "pagrindinis" : "main";
             Software = lt ? " (programinis)" : " (software)";
             NoScreen = lt ? "Nerastas ekranas" : "No screen found";
@@ -2887,11 +2889,18 @@ namespace TVCast
 
         /// <summary>casting from a second (virtual) screen ends: its windows go to the main screen,
         /// otherwise they stay on the now unseen monitor (it remains switched on in Windows)</summary>
+        string homeRefused; // set by MoveWindowsHome, shown after "Stopped"
+
         void MoveWindowsHome()
         {
             ScreenInfo s = screenBox.SelectedItem as ScreenInfo;
             if (caster == null || s == null || s.Primary) return;
-            try { WindowMover.MoveHome(s.Left, s.Top, s.Width, s.Height); }
+            try
+            {
+                WindowMover.HomeResult r = WindowMover.MoveHome(s.Left, s.Top, s.Width, s.Height);
+                foreach (string line in r.Log) WindowLog("back to the main screen: " + line);
+                if (r.Refused > 0) homeRefused = string.Format(Texts.WindowsRefused, r.Refused);
+            }
             catch (Exception e) { Say(e.Message, Ui.Danger); }
         }
 
@@ -2947,6 +2956,7 @@ namespace TVCast
                 MoveWindowsHome();
                 StopCast();
                 Say(Texts.Stopped, Ui.Idle);
+                if (homeRefused != null) { Say(homeRefused, Ui.Danger); homeRefused = null; }
                 return;
             }
             IPAddress ip = ParseTv(tvBox.Text);
@@ -2979,6 +2989,7 @@ namespace TVCast
                 MoveWindowsHome();
                 StopCast();
                 Say(Texts.Stopped, Ui.Idle);
+                if (homeRefused != null) { Say(homeRefused, Ui.Danger); homeRefused = null; }
                 return;
             }
             SaveAll();
