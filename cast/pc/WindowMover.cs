@@ -107,6 +107,13 @@ namespace TVCast
                         ok = SetWindowPos(h, IntPtr.Zero, n[0], n[1], n[2], n[3], 0x14 /* SWP_NOZORDER | SWP_NOACTIVATE */);
                         GetWindowPlacement(h, ref p);
                         if (ok && p.showCmd != 3) ShowWindow(h, 3 /* SW_MAXIMIZE */);
+                        // the restored position too, or a click on its taskbar button (minimize,
+                        // restore) sends it back to the other screen
+                        GetWindowPlacement(h, ref p);
+                        p.normalPosition = new RECT { Left = n[0] - w.Left, Top = n[1] - w.Top, Right = n[0] + n[2] - w.Left, Bottom = n[1] + n[3] - w.Top };
+                        p.flags = 0;
+                        p.showCmd = 3;
+                        SetWindowPlacement(h, ref p);
                         how = "maximized";
                     }
                     else // normal or snapped to a side: move what is shown
