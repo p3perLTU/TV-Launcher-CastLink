@@ -99,21 +99,18 @@ namespace TVCast
                     }
                     else if (p.showCmd == 3) // maximized
                     {
-                        // Moving a maximized window with SetWindowPos makes Windows maximize it on the
-                        // screen it lands on. SetWindowPlacement only changes the restored position
-                        // and leaves it where it is, and restoring first let Chrome put it back on the
-                        // screen it was maximized on (both tested with Chrome).
-                        int[] n = CentreOn(normal, from) ? MapRect(normal, from, to) : normal; // its restored spot, on the main screen
+                        // Restore, move it as a normal window, maximize again, with short pauses so
+                        // the program sees each step. Tested with Chrome: SetWindowPlacement alone left
+                        // it on the other screen, and moving it while maximized looked right but a
+                        // click on its taskbar button (minimize, restore) sent it back there.
+                        ShowWindow(h, 9 /* SW_RESTORE */);
+                        System.Threading.Thread.Sleep(300);
+                        GetWindowRect(h, out a);
+                        int[] back = { a.Left, a.Top, a.Right - a.Left, a.Bottom - a.Top };
+                        int[] n = CentreOn(back, from) ? MapRect(back, from, to) : MapRect(back, to, to);
                         ok = SetWindowPos(h, IntPtr.Zero, n[0], n[1], n[2], n[3], 0x14 /* SWP_NOZORDER | SWP_NOACTIVATE */);
-                        GetWindowPlacement(h, ref p);
-                        if (ok && p.showCmd != 3) ShowWindow(h, 3 /* SW_MAXIMIZE */);
-                        // the restored position too, or a click on its taskbar button (minimize,
-                        // restore) sends it back to the other screen
-                        GetWindowPlacement(h, ref p);
-                        p.normalPosition = new RECT { Left = n[0] - w.Left, Top = n[1] - w.Top, Right = n[0] + n[2] - w.Left, Bottom = n[1] + n[3] - w.Top };
-                        p.flags = 0;
-                        p.showCmd = 3;
-                        SetWindowPlacement(h, ref p);
+                        System.Threading.Thread.Sleep(300);
+                        ShowWindow(h, 3 /* SW_MAXIMIZE */);
                         how = "maximized";
                     }
                     else // normal or snapped to a side: move what is shown
