@@ -97,19 +97,16 @@ namespace TVCast
                         ok = SetWindowPlacement(h, ref p);
                         how = "minimized";
                     }
-                    else if (p.showCmd == 3) // maximized: restore, move, maximize on the main screen
+                    else if (p.showCmd == 3) // maximized
                     {
-                        ShowWindow(h, 9 /* SW_RESTORE */);
+                        // Moving a maximized window with SetWindowPos makes Windows maximize it on the
+                        // screen it lands on. SetWindowPlacement only changes the restored position
+                        // and leaves it where it is, and restoring first let Chrome put it back on the
+                        // screen it was maximized on (both tested with Chrome).
+                        int[] n = CentreOn(normal, from) ? MapRect(normal, from, to) : normal; // its restored spot, on the main screen
+                        ok = SetWindowPos(h, IntPtr.Zero, n[0], n[1], n[2], n[3], 0x14 /* SWP_NOZORDER | SWP_NOACTIVATE */);
                         GetWindowPlacement(h, ref p);
-                        r = p.normalPosition;
-                        int[] back = { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
-                        int[] backOnScreen = { back[0] + w.Left, back[1] + w.Top, back[2], back[3] };
-                        int[] n = CentreOn(backOnScreen, from) ? MapRect(backOnScreen, from, to) : backOnScreen;
-                        p.normalPosition = new RECT { Left = n[0] - w.Left, Top = n[1] - w.Top, Right = n[0] + n[2] - w.Left, Bottom = n[1] + n[3] - w.Top };
-                        p.flags = 0;
-                        p.showCmd = 1;
-                        ok = SetWindowPlacement(h, ref p);
-                        ShowWindow(h, 3 /* SW_MAXIMIZE */);
+                        if (ok && p.showCmd != 3) ShowWindow(h, 3 /* SW_MAXIMIZE */);
                         how = "maximized";
                     }
                     else // normal or snapped to a side: move what is shown
