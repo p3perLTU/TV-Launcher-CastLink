@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="avatar_hint">◀ ▶ keisti raidę · OK išsaugoti</string>
+    <string name="greeting_night">Labos nakties</string>
+    <string name="greeting_morning">Labas rytas</string>
+    <string name="greeting_day">Laba diena</string>
+    <string name="greeting_evening">Labas vakaras</string>
+    <string name="date_pattern">EEEE, MMMM d</string>
+
+    <string name="pill_apps">Programos</string>
+    <string name="pill_inputs">Įvestys</string>
+    <string name="pill_wifi">Wi-Fi</string>
+    <string name="pill_settings">Nustatymai</string>
+    <string name="all_apps">Visos programos</string>
+
+    <string name="live_tv">Televizija</string>
+    <string name="no_inputs">Įvesčių nerasta</string>
+    <string name="open_failed">Nepavyko atidaryti: %1$s</string>
+    <string name="switch_failed">Nepavyko perjungti: %1$s</string>
+
+    <string name="wx_title">Orai</string>
+    <string name="wx_city_title">Orų miestas</string>
+    <string name="wx_search">Ieškoti miesto…</string>
+    <string name="wx_search_hint">Miesto pavadinimas</string>
+    <string name="wx_searching">Ieškoma…</string>
+    <string name="wx_not_found">Nieko nerasta. Patikrinkite pavadinimą arba interneto ryšį.</string>
+    <string name="wx_city_hint">▲ ▼ rinktis · OK pasirinkti · Back uždaryti</string>
+    <string name="ram_title">Išvalyti RAM</string>
+    <string name="ram_working">Uždaromos fone veikiančios programos…</string>
+    <string name="ram_done">Fone veikiančios programos uždarytos · laisva %1$d MB</string>
+    <string name="bg_title">Fonas</string>
+    <string name="bg_theme">Tema</string>
+    <string name="bg_brightness">Ryškumas</string>
+    <string name="bg_photo">Nuotrauka / video</string>
+    <string name="bg_fit">Talpinimas</string>
+    <string name="fit_fill">Užpildyti</string>
+    <string name="fit_fit">Pritaikyti</string>
+    <string name="fit_stretch">Ištempti</string>
+    <string name="fit_center">Centras</string>
+    <string name="bg_ink">Tekstas</string>
+    <string name="ink_auto">Automatiškai</string>
+    <string name="ink_light">Šviesus</string>
+    <string name="ink_dark">Tamsus</string>
+    <string name="bg_photo_pick">Pasirinkti iš USB, Pictures ar Movies</string>
+    <string name="bg_photo_none">Nuotraukų ir video nerasta. Įkiškite USB atmintuką su JPG, PNG ar MP4 failais.</string>
+    <string name="bg_photo_noperm">Launcheriui dar neleista skaityti nuotraukų (saugyklos leidimas).</string>
+    <string name="bg_photo_failed">Nepavyko atidaryti šios nuotraukos</string>
+    <string name="bg_hint">◀ ▶ keisti · OK pasirinkti · Back uždaryti</string>
+    <string name="theme_sunset">Saulėlydžio bangos</string>
+    <string name="theme_night">Naktinės bangos</string>
+    <string name="theme_violet">Violetinės bangos</string>
+    <string name="theme_sea">Jūros bangos</string>
+    <string name="theme_blue">Mėlynos bangos</string>
+    <string name="theme_dark">Tamsi</string>
+    <string name="theme_navy">Tamsiai mėlyna</string>
+    <string name="theme_graphite">Grafitas</string>
+    <string name="theme_photo">Mano nuotrauka</string>
+    <string name="theme_video">Mano video</string>
+    <string name="bg_video_copying">Kopijuojamas video…</string>
+    <string name="bg_video_too_big">Video per didelis (daugiausia 500 MB)</string>
+    <string name="bg_video_no_space">TV per mažai laisvos vietos šiam video</string>
+
+    <string name="menu_change">Pakeisti programą</string>
+    <string name="menu_move">Perkelti</string>
+    <string name="menu_hint">OK pasirinkti · Back uždaryti</string>
+    <string name="move_hint">◀ ▶ ▲ ▼ perkelti · OK baigti</string>
+
+    <string name="feels_like">Jaučiasi %1$s</string>
+    <string name="wx_clear">Giedra</string>
+    <string name="wx_mainly_clear">Mažai debesuota</string>
+    <string name="wx_partly_cloudy">Nepastoviai debesuota</string>
+    <string name="wx_overcast">Debesuota</string>
+    <string name="wx_fog">Rūkas</string>
+    <string name="wx_drizzle">Dulksna</string>
+    <string name="wx_rain">Lietus</string>
+    <string name="wx_snow">Sniegas</string>
+    <string name="wx_thunder">Perkūnija</string>
+</resources>

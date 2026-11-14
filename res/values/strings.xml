@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default (English) texts. Lithuanian ones are in values-lt; Android picks the file that
+     matches the TV's system language and restarts the launcher when it changes. -->
+<resources>
+    <string name="avatar_hint">◀ ▶ change the letter · OK save</string>
+    <string name="greeting_night">Good night</string>
+    <string name="greeting_morning">Good morning</string>
+    <string name="greeting_day">Good afternoon</string>
+    <string name="greeting_evening">Good evening</string>
+    <!-- java.text.SimpleDateFormat pattern for the date under the clock -->
+    <string name="date_pattern">EEEE, MMMM d</string>
+
+    <string name="pill_apps">Apps</string>
+    <string name="pill_inputs">Inputs</string>
+    <string name="pill_wifi">Wi-Fi</string>
+    <string name="pill_settings">Settings</string>
+    <string name="all_apps">All apps</string>
+
+    <string name="live_tv">Live TV</string>
+    <string name="no_inputs">No inputs found</string>
+    <string name="open_failed">Could not open: %1$s</string>
+    <string name="switch_failed">Could not switch: %1$s</string>
+
+    <string name="wx_title">Weather</string>
+    <string name="wx_city_title">Weather city</string>
+    <string name="wx_search">Search city…</string>
+    <string name="wx_search_hint">City name</string>
+    <string name="wx_searching">Searching…</string>
+    <string name="wx_not_found">Nothing found. Check the name or the internet connection.</string>
+    <string name="wx_city_hint">▲ ▼ choose · OK select · Back close</string>
+    <string name="ram_title">Clear RAM</string>
+    <string name="ram_working">Closing background apps…</string>
+    <string name="ram_done">Background apps closed · %1$d MB free</string>
+    <string name="bg_title">Background</string>
+    <string name="bg_theme">Theme</string>
+    <string name="bg_brightness">Brightness</string>
+    <string name="bg_photo">Photo / video</string>
+    <string name="bg_fit">Picture position</string>
+    <string name="fit_fill">Fill</string>
+    <string name="fit_fit">Fit</string>
+    <string name="fit_stretch">Stretch</string>
+    <string name="fit_center">Center</string>
+    <string name="bg_ink">Text</string>
+    <string name="ink_auto">Automatic</string>
+    <string name="ink_light">Light</string>
+    <string name="ink_dark">Dark</string>
+    <string name="bg_photo_pick">Choose from USB, Pictures or Movies</string>
+    <string name="bg_photo_none">No photos or videos found. Plug in a USB stick with JPG, PNG or MP4 files.</string>
+    <string name="bg_photo_noperm">The launcher is not allowed to read photos yet (storage permission).</string>
+    <string name="bg_photo_failed">Could not open this picture</string>
+    <string name="bg_hint">◀ ▶ change · OK select · Back close</string>
+    <string name="theme_sunset">Sunset waves</string>
+    <string name="theme_night">Night waves</string>
+    <string name="theme_violet">Violet waves</string>
+    <string name="theme_sea">Sea waves</string>
+    <string name="theme_blue">Blue waves</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_navy">Navy</string>
+    <string name="theme_graphite">Graphite</string>
+    <string name="theme_photo">My photo</string>
+    <string name="theme_video">My video</string>
+    <string name="bg_video_copying">Copying the video…</string>
+    <string name="bg_video_too_big">The video is too big (max 500 MB)</string>
+    <string name="bg_video_no_space">Not enough free space on the TV for this video</string>
+
+    <string name="menu_change">Change app</string>
+    <string name="menu_move">Move</string>
+    <string name="menu_hint">OK select · Back close</string>
+    <string name="move_hint">◀ ▶ ▲ ▼ move · OK done</string>
+
+    <string name="feels_like">Feels like %1$s</string>
+    <string name="wx_clear">Clear</string>
+    <string name="wx_mainly_clear">Mainly clear</string>
+    <string name="wx_partly_cloudy">Partly cloudy</string>
+    <string name="wx_overcast">Overcast</string>
+    <string name="wx_fog">Fog</string>
+    <string name="wx_drizzle">Drizzle</string>
+    <string name="wx_rain">Rain</string>
+    <string name="wx_snow">Snow</string>
+    <string name="wx_thunder">Thunderstorm</string>
+</resources>

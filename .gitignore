@@ -1,0 +1,71 @@
+# --- Build output ---------------------------------------------------------------
+build/
+out/
+.gradle/
+*.class
+*.dex
+*.idsig
+
+# --- Signing keys and their passwords ----------------------------------------------
+# The release key lives outside the project; these lines only make sure no key or
+# password file can ever be committed.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.dpapi
+release-pass*
+local.properties
+
+# --- Ready-made apps: share them as downloads (e.g. GitHub Releases), not in git ---
+*.apk
+*.aab
+*.exe
+*.zip
+# settings of the PC app, written next to the exe (contain the TV's name and address)
+TVCast-PC-settings.txt
+CastLink-settings.txt
+RodytiTV-nustatymai.txt
+# the TV's address for the scripts (after-update.ps1, cast/measure.ps1)
+tv-ip.txt
+# test output
+tests/out/
+
+# --- Pictures and videos -------------------------------------------------------------
+# Test screenshots and personal media stay local. The apps need no image files: every
+# icon is an XML vector in res/drawable. For pictures in the docs, add an exception,
+# e.g. !docs/*.png
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp4
+*.mkv
+*.mov
+
+# --- Local backups ---------------------------------------------------------------------
+tvbackup/
+
+# --- Logs, temporary files, editor / OS leftovers -------------------------------------
+*.log
+*.tmp
+*.part
+*.bak
+*.hprof
+*.iml
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- NuGet packages and the DLLs taken from them (cast/pc/restore-packages.ps1 gets them again) ---
+packages/
+cast/pc/lib/
+*.dll
+*.nupkg
+dist/lib/
+dist/*.txt

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CastLink</string>
+    <string name="subtitle">Telefono ekranas ir garsas televizoriuje</string>
+    <string name="tvs">Televizoriai</string>
+    <string name="manual">Arba įvesk TV adresą</string>
+    <string name="ready">Pasirink TV ir spausk „Rodyti“</string>
+    <string name="searching">Ieškoma TV…</string>
+    <string name="found_none">TV atidaryk „CastLink“ arba žemiau įvesk TV adresą.</string>
+    <string name="ip_hint">TV adresas (jį rodo TV programa)</string>
+    <string name="fps120">120 kadr./s (šiek tiek šviežesnis vaizdas, daugiau Wi-Fi ir baterijos)</string>
+    <string name="start">Rodyti</string>
+    <string name="usb_hint">Prijungtas USB laidas. Įjunkite USB siejimą: kompiuterio ekranas šiame telefone bus daug greitesnis ir ryškesnis.</string>
+    <string name="usb_button">Įjungti USB siejimą</string>
+    <string name="usb_toast">Įjunkite „USB siejimas“ ir grįžkite</string>
+    <string name="usb_ready">USB laidas paruoštas. Kompiuteryje pasirinkite šį telefoną (jo adresas neprasideda 192.168).</string>
+    <string name="show_pc">Rodyti kompiuterio ekraną čia</string>
+    <string name="stop">Sustabdyti</string>
+    <string name="casting">Rodoma į %1$s</string>
+    <string name="casting_fps">Rodoma į %1$s · %2$d kadr./s</string>
+    <string name="no_audio">Be garso: neduotas leidimas fiksuoti garsą.</string>
+    <string name="bad_ip">Įvesk TV adresą</string>
+    <string name="overlay_hint">Kad bendrinant telefonas neužsirakintų, įjunk „Rodyti virš kitų programų“ ir grįžk.</string>
+    <string name="channel">Ekrano rodymas</string>
+    <string name="pair_title">Pirmas kartas su %1$s</string>
+    <string name="pair_message">Ar TV rodo šį kodą?\n\n%1$s\n\nTaip – sutampa (TV bus įsimintas). Ne – gal kažkas kitas bando prisijungti.</string>
+    <string name="pair_yes">Taip, sutampa</string>
+    <string name="pair_no">Ne</string>
+    <string name="old_receiver">TV neatsako. Jei jame sena CastLink versija, atnaujink ją (ji nešifruoja).</string>
+</resources>

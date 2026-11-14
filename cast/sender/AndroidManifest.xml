@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="lt.tvcast.sender"
+    android:versionCode="11"
+    android:versionName="1.10">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- finding the TV on the Wi-Fi (mDNS) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- sound of other apps (AudioPlaybackCapture needs it; the microphone is never opened) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- an invisible 1x1 window that keeps the screen on while casting: Android stops the
+         projection when the screen turns off, and ignores screen wake locks of background apps -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/app_icon"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- the TV app's receiver, built into this app: shows the PC's screen on the phone (the
+             PC lists the phone next to its TVs while this screen is open) -->
+        <activity
+            android:name="lt.tvcast.receiver.ReceiverActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <service
+            android:name=".CastService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+    </application>
+</manifest>

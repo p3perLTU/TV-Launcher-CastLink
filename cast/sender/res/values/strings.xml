@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CastLink</string>
+    <string name="subtitle">Your phone’s screen and sound on the TV</string>
+    <string name="tvs">TVs</string>
+    <string name="manual">Or type the TV’s address</string>
+    <string name="ready">Pick a TV and press Start</string>
+    <string name="searching">Searching for TVs…</string>
+    <string name="found_none">Open “CastLink” on the TV, or type its address below.</string>
+    <string name="ip_hint">TV address (shown by the TV app)</string>
+    <string name="fps120">120 frames/s (a little fresher image, more Wi-Fi and battery)</string>
+    <string name="start">Start</string>
+    <string name="usb_hint">USB cable plugged in. Turn on USB tethering: the PC’s screen on this phone is then much faster and sharper.</string>
+    <string name="usb_button">Turn on USB tethering</string>
+    <string name="usb_toast">Turn on “USB tethering”, then come back</string>
+    <string name="usb_ready">USB cable ready. On the PC pick this phone (its address does not start with 192.168).</string>
+    <string name="show_pc">Show the PC screen here</string>
+    <string name="stop">Stop</string>
+    <string name="casting">Showing on %1$s</string>
+    <string name="casting_fps">Showing on %1$s · %2$d frames/s</string>
+    <string name="no_audio">Sound is off: the permission to capture audio was not given.</string>
+    <string name="bad_ip">Enter the TV address</string>
+    <string name="overlay_hint">To stop the phone locking while casting, allow “Display over other apps” and come back.</string>
+    <string name="channel">Screen casting</string>
+    <string name="pair_title">First time with %1$s</string>
+    <string name="pair_message">Does the TV show this code?\n\n%1$s\n\nYes: it matches (the TV will be remembered). No: someone else may be trying to connect.</string>
+    <string name="pair_yes">Yes, it matches</string>
+    <string name="pair_no">No</string>
+    <string name="old_receiver">The TV does not answer. If its CastLink is older, update it (that one does not encrypt).</string>
+</resources>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App icon: the launcher's sunset colours with four glass tiles (2x2 like the home blocks). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:pathData="M10,0h28a10,10 0 0 1 10,10v28a10,10 0 0 1 -10,10h-28a10,10 0 0 1 -10,-10v-28a10,10 0 0 1 10,-10z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0"
+                android:endX="48" android:endY="48"
+                android:startColor="#FF1456B8" android:centerColor="#FFD81B60"
+                android:endColor="#FFFF9800" />
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#B3FFFFFF" android:pathData="M10,10h12v12h-12z" />
+    <path android:fillColor="#80FFFFFF" android:pathData="M26,10h12v12h-12z" />
+    <path android:fillColor="#80FFFFFF" android:pathData="M10,26h12v12h-12z" />
+    <path android:fillColor="#B3FFFFFF" android:pathData="M26,26h12v12h-12z" />
+</vector>

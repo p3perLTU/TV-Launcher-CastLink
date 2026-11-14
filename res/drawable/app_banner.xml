@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 16:9 banner for the TV's app list: the same 2x2 tile mark on the sunset gradient. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp" android:height="180dp"
+    android:viewportWidth="320" android:viewportHeight="180">
+    <path android:pathData="M0,0h320v180h-320z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0"
+                android:endX="320" android:endY="180"
+                android:startColor="#FF0A2A6E" android:centerColor="#FFD81B60"
+                android:endColor="#FFFF9800" />
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#B3FFFFFF" android:pathData="M120,50h36v36h-36z" />
+    <path android:fillColor="#80FFFFFF" android:pathData="M164,50h36v36h-36z" />
+    <path android:fillColor="#80FFFFFF" android:pathData="M120,94h36v36h-36z" />
+    <path android:fillColor="#B3FFFFFF" android:pathData="M164,94h36v36h-36z" />
+</vector>
