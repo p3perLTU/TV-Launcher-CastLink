@@ -2890,11 +2890,26 @@ namespace TVCast
         /// <summary>casting from a second (virtual) screen ends: its windows go to the main screen,
         /// otherwise they stay on the now unseen monitor (it remains switched on in Windows)</summary>
         string homeRefused; // set by MoveWindowsHome, shown after "Stopped"
+        // the second screen whose cast stopped: nobody sees it now, so while CastLink is open and
+        // casts nothing, a window that lands there again (Chrome leaving full screen goes back to
+        // where it was before, a program opening there) is sent home by Tick
+        int[] homeGuard;
+
+        void GuardHome()
+        {
+            try
+            {
+                WindowMover.HomeResult r = WindowMover.MoveHome(homeGuard[0], homeGuard[1], homeGuard[2], homeGuard[3]);
+                foreach (string line in r.Log) WindowLog("came back to the unseen screen, sent home: " + line);
+            }
+            catch (Exception) { } // a window that went away meanwhile; tried again in a second
+        }
 
         void MoveWindowsHome()
         {
             ScreenInfo s = screenBox.SelectedItem as ScreenInfo;
             if (caster == null || s == null || s.Primary) return;
+            homeGuard = new[] { s.Left, s.Top, s.Width, s.Height };
             try
             {
                 WindowMover.HomeResult r = WindowMover.MoveHome(s.Left, s.Top, s.Width, s.Height);
@@ -3055,6 +3070,7 @@ namespace TVCast
         void Tick()
         {
             if (++usbCheck % 2 == 0) CheckUsbInternet(); // every 2 s
+            if (caster == null && homeGuard != null) GuardHome();
             if (caster == null) return;
             if (caster.WrongGpu && !askedGpu && !noAsk)
             {
