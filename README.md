@@ -97,7 +97,7 @@ The PC on an iPad or a Mac, in Safari.
 </tr>
 </table>
 
-<sub>Addresses in the screenshots are blurred on purpose.</sub>
+<sub>Addresses, other apps' logos and the weather text are blurred on purpose.</sub>
 
 ## 📦 The apps
 
