@@ -16,6 +16,10 @@
 
 [**⬇️ Download**](../../releases/latest) &nbsp;·&nbsp; [Install guide](dist/INSTALL.md) &nbsp;·&nbsp; [Launcher](docs/launcher.md) &nbsp;·&nbsp; [Screen cast](docs/screen-cast.md) &nbsp;·&nbsp; [iPad & Mac](docs/ipad.md) &nbsp;·&nbsp; [Wireless Display Receiver](https://github.com/p3perLTU/wireless-display-receiver) &nbsp;·&nbsp; [Development](docs/development.md)
 
+<br>
+
+<img src="docs/images/tour.gif" width="720" alt="A tour on the TV: the launcher's home screen, the All apps page and the CastLink waiting screen">
+
 </div>
 
 ---
@@ -68,6 +72,32 @@ The PC on an iPad or a Mac, in Safari.
 </td>
 </tr>
 </table>
+
+## 📸 Screenshots
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/images/launcher-home.png" alt="TV Launcher home screen: greeting, clock, date, weather and two 2×2 blocks of apps on a wave background"><br><sub><b>TV Launcher:</b> clock, weather, your apps</sub></td>
+<td width="50%" align="center"><img src="docs/images/launcher-apps.png" alt="TV Launcher All apps page with app logos on glass tiles"><br><sub><b>All apps,</b> with the weather, Clear RAM and background tiles</sub></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><img src="docs/images/tv-waiting.png" width="720" alt="CastLink on the TV waiting for a connection, with the remote and remote-typing help"><br><sub><b>CastLink on the TV:</b> waiting for the phone or PC, with the remote keys and typing with the number keys</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><img src="docs/images/phone-app.png" width="300" alt="CastLink phone app: found TV, address field, 120 frames/s switch, Start and Show the PC screen here buttons"><br><sub><b>CastLink on the phone:</b> pick the TV and press Start</sub></td>
+<td width="50%" align="center"><img src="docs/images/phone-receiver.png" alt="CastLink on the phone waiting for the PC, with the touch control gestures"><br><sub><b>The PC on the phone:</b> waiting screen with the touch gestures</sub></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="33%" align="center"><img src="docs/images/pc-app.png" alt="CastLink PC window, CastLink app page: device list, 120 frames/s, sound, control, Show"><br><sub><b>PC:</b> cast to a TV or phone</sub></td>
+<td width="33%" align="center"><img src="docs/images/pc-browser.png" alt="CastLink PC window, Browser page for a Mac, another PC or an iPad"><br><sub><b>PC:</b> show in a browser (iPad, Mac)</sub></td>
+<td width="33%" align="center"><img src="docs/images/pc-screens.png" alt="CastLink PC window, Screens page: which screen to show and how to add a virtual screen"><br><sub><b>PC:</b> pick the screen, add a virtual one</sub></td>
+</tr>
+</table>
+
+<sub>Addresses in the screenshots are blurred on purpose.</sub>
 
 ## 📦 The apps
 

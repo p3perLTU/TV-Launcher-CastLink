@@ -35,8 +35,8 @@ tests/out/
 
 # --- Pictures and videos -------------------------------------------------------------
 # Test screenshots and personal media stay local. The apps need no image files: every
-# icon is an XML vector in res/drawable. For pictures in the docs, add an exception,
-# e.g. !docs/*.png
+# icon is an XML vector in res/drawable. Pictures for the docs live in docs/images
+# (exception below).
 *.png
 *.jpg
 *.jpeg
@@ -45,6 +45,9 @@ tests/out/
 *.mp4
 *.mkv
 *.mov
+# README pictures: screenshots made for the docs, with addresses and names hidden
+!docs/images/*.png
+!docs/images/*.gif
 
 # --- Local backups ---------------------------------------------------------------------
 tvbackup/
