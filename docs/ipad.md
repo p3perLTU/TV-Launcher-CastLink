@@ -126,7 +126,12 @@ with the phone chosen.
 The TV works the same way (pick the virtual screen, then **Show on TV**). While a second
 screen is cast, a window that becomes active within 4 s of a click from the TV, phone or iPad
 is moved onto the shown screen, typed text and keys only reach a window on that screen, and
-when the cast stops the screen's windows are moved back to the main one (`WindowMover.cs`).
+when the cast stops the screen's windows are moved back to the main one (`WindowMover.cs`):
+normal, snapped, minimized and maximized ones (a maximized window is restored, moved and
+maximized again, or Chrome sends it back after a minimize). While CastLink stays open and casts
+nothing, a window that lands on that unseen screen again (Chrome leaving full screen returns to
+where it was before) is sent home within a second. Windows refuses to move programs run as
+administrator; the PC window then says how many stayed (move them with Win+Shift+←).
 
 The choice is saved (line 6 of the settings file). Touches land on the screen that is shown
 (`RemoteInput.ToVirtualDesk`: SendInput over the whole virtual desktop), also when it is left
