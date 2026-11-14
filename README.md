@@ -78,7 +78,7 @@ The PC on an iPad or a Mac, in Safari.
 <table>
 <tr>
 <td width="50%" align="center"><img src="docs/images/launcher-home.png" alt="TV Launcher home screen: greeting, clock, date, weather and two 2×2 blocks of apps on a wave background"><br><sub><b>TV Launcher:</b> clock, weather, your apps</sub></td>
-<td width="50%" align="center"><img src="docs/images/launcher-apps.png" alt="TV Launcher All apps page with app logos on glass tiles"><br><sub><b>All apps,</b> with the weather, Clear RAM and background tiles</sub></td>
+<td width="50%" align="center"><img src="docs/images/launcher-apps.png" alt="TV Launcher All apps page with app logos on glass tiles"><br><sub><b>All apps,</b> with CastLink, Wireless Display Receiver and the weather, Clear RAM and background tiles</sub></td>
 </tr>
 <tr>
 <td colspan="2" align="center"><img src="docs/images/tv-waiting.png" width="720" alt="CastLink on the TV waiting for a connection, with the remote and remote-typing help"><br><sub><b>CastLink on the TV:</b> waiting for the phone or PC, with the remote keys and typing with the number keys</sub></td>
