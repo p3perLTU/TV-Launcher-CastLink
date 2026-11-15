@@ -690,6 +690,10 @@ namespace TVCast.Tests
         {
             Equal(2, MainForm.WantedGpuPreference(true), "a monitor on the NVIDIA card (HDMI): High performance");
             Equal(1, MainForm.WantedGpuPreference(false), "the laptop panel on the integrated card: Power saving");
+            True(Capture.IsNvidiaDeviceId("PCI\\VEN_10DE&DEV_28A0&SUBSYS_13AD1462&REV_A1"), "an NVIDIA card drives the screen");
+            True(!Capture.IsNvidiaDeviceId("PCI\\VEN_1002&DEV_1681&SUBSYS_13AD1462&REV_C8"), "an AMD card");
+            True(!Capture.IsNvidiaDeviceId("Root\\MttVDD"), "the virtual display driver");
+            True(!Capture.IsNvidiaDeviceId(null), "unknown");
         }
 
         static void TestVirtualDisplayLink()

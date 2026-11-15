@@ -295,6 +295,30 @@ namespace TVCast
             catch (Exception) { return ""; }
         }
 
+        /// <summary>
+        /// The screen is driven by the NVIDIA card, by Windows' list of display adapters. DXGI is
+        /// not reliable for this on a hybrid laptop: in an app that Windows runs on the integrated
+        /// card it lists the NVIDIA card's screen under the integrated one.
+        /// </summary>
+        static bool NvidiaDrives(string device)
+        {
+            DISPLAY_DEVICE dd = new DISPLAY_DEVICE();
+            dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+            try
+            {
+                for (uint i = 0; EnumDisplayDevices(null, i, ref dd, 0); i++)
+                    if (string.Equals(dd.DeviceName, device, StringComparison.OrdinalIgnoreCase)) return IsNvidiaDeviceId(dd.DeviceID);
+            }
+            catch (Exception) { }
+            return false;
+        }
+
+        /// <summary>"PCI\VEN_10DE&amp;DEV_28A0&amp;..." is an NVIDIA card (unit-tested)</summary>
+        internal static bool IsNvidiaDeviceId(string id)
+        {
+            return !string.IsNullOrEmpty(id) && id.IndexOf("VEN_10DE", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         /// <summary>the model of the monitor on an output, "" if unknown</summary>
         static string MonitorId(string device)
         {
@@ -427,7 +451,7 @@ namespace TVCast
                 if (pickOutput == IntPtr.Zero) throw new Exception(Texts.NoScreen);
                 Com.F<D_Buf>(pickAdapter, 8)(pickAdapter, desc); // DXGI_ADAPTER_DESC, Description first
                 AdapterName = Marshal.PtrToStringUni(desc);
-                bool nvidiaScreen = (uint)Marshal.ReadInt32(desc, 256) == 0x10DE; // DXGI_ADAPTER_DESC.VendorId
+                bool nvidiaScreen = NvidiaDrives(ScreenDevice) || (uint)Marshal.ReadInt32(desc, 256) == 0x10DE; // DXGI_ADAPTER_DESC.VendorId as a fallback
 
                 int level;
                 // driver type UNKNOWN because the adapter is given; BGRA support
