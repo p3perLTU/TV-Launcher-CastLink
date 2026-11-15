@@ -686,6 +686,12 @@ namespace TVCast.Tests
             Equal(0, MainForm.ParseGpuPreference("GpuPreference="), "broken value");
         }
 
+        static void TestGpuPreferenceFollowsTheScreensCard()
+        {
+            Equal(2, MainForm.WantedGpuPreference(true), "a monitor on the NVIDIA card (HDMI): High performance");
+            Equal(1, MainForm.WantedGpuPreference(false), "the laptop panel on the integrated card: Power saving");
+        }
+
         static void TestVirtualDisplayLink()
         {
             Uri u = new Uri(MainForm.VirtualDisplayUrl);

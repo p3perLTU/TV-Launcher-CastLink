@@ -242,7 +242,10 @@ namespace TVCast
     /// <summary>Desktop Duplication of the primary monitor, copied to a BGRA array.</summary>
     sealed class WrongGpuException : Exception
     {
-        public WrongGpuException() : base(Texts.WrongGpu) { }
+        /// <summary>the screen to capture is driven by the NVIDIA card (e.g. a monitor on the HDMI
+        /// port of a hybrid laptop), not by the integrated one</summary>
+        public readonly bool NvidiaDrivesScreen;
+        public WrongGpuException(bool nvidiaDrivesScreen) : base(Texts.WrongGpu) { NvidiaDrivesScreen = nvidiaDrivesScreen; }
     }
 
     sealed class Capture : IDisposable
@@ -424,6 +427,7 @@ namespace TVCast
                 if (pickOutput == IntPtr.Zero) throw new Exception(Texts.NoScreen);
                 Com.F<D_Buf>(pickAdapter, 8)(pickAdapter, desc); // DXGI_ADAPTER_DESC, Description first
                 AdapterName = Marshal.PtrToStringUni(desc);
+                bool nvidiaScreen = (uint)Marshal.ReadInt32(desc, 256) == 0x10DE; // DXGI_ADAPTER_DESC.VendorId
 
                 int level;
                 // driver type UNKNOWN because the adapter is given; BGRA support
@@ -451,7 +455,7 @@ namespace TVCast
                 // DXGI_ERROR_UNSUPPORTED on a laptop with two GPUs: Windows runs this process on
                 // the GPU that does not drive the screen (NVIDIA set to "High performance" while
                 // the integrated GPU drives the panel); duplication cannot cross adapters
-                if (hr == unchecked((int)0x887A0004) && AdapterCount(factory) > 1) throw new WrongGpuException();
+                if (hr == unchecked((int)0x887A0004) && AdapterCount(factory) > 1) throw new WrongGpuException(nvidiaScreen);
                 Com.Check(hr, "DuplicateOutput");
 
                 Com.F<D_Buf>(dup, 7)(dup, desc); // DXGI_OUTDUPL_DESC
@@ -1076,6 +1080,8 @@ namespace TVCast
         [ThreadStatic] static byte[] sealBuf;
         /// <summary>capture failed because Windows runs this app on the wrong GPU</summary>
         public volatile bool WrongGpu;
+        /// <summary>with WrongGpu: the screen is on the NVIDIA card (wants "High performance")</summary>
+        public volatile bool WrongGpuNvidia;
         public volatile string EncoderName = "";
         public long Frames, Bytes;
         // diagnostics: encoder latency (input -> output, same pts) and NV12 conversion time, summed
@@ -1371,7 +1377,7 @@ namespace TVCast
                 catch (Exception e)
                 {
                     Status = e.Message;
-                    if (e is WrongGpuException) WrongGpu = true;
+                    if (e is WrongGpuException) { WrongGpuNvidia = ((WrongGpuException)e).NvidiaDrivesScreen; WrongGpu = true; }
                     Thread.Sleep(500); // screen mode change, UAC prompt, ...: start over
                 }
             }
@@ -1893,6 +1899,7 @@ namespace TVCast
         public static string Searching, Found, NotFound, Stopped, EnterIp, Showing, Software;
         public static string NoScreen, NoOutput1, ScreenFormat, NoEncoder, EncoderError;
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
+        public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -1930,6 +1937,10 @@ namespace TVCast
                             : "The NVIDIA graphics card encodes the virtual screen faster (up to ~100 frames/s instead of ~75), but Windows now runs this app on “Power saving”.\n\nSet this app to “High performance” and restart it? (Back on the main screen the app offers to switch back.)";
             WrongGpuAsk = lt ? "Šiame nešiojamame kompiuteryje ekraną rodo integruota vaizdo plokštė, o Windows programą paleido kitoje, todėl ekrano nufilmuoti negalima.\n\nNustatyti programai „Energijos taupymas“ (tas pats kaip Parametrai → Ekranas → Grafika) ir paleisti ją iš naujo?"
                              : "On this laptop the screen is driven by the integrated graphics, but Windows started this app on the other card, so the screen cannot be captured.\n\nSet this app to “Power saving” (the same as Settings → Display → Graphics) and restart it?";
+            WrongGpuAskNvidia = lt ? "Šį ekraną (pvz. monitorių per HDMI) rodo NVIDIA vaizdo plokštė, o Windows programą paleido integruotoje, todėl ekrano nufilmuoti negalima.\n\nNustatyti programai „Didelis našumas“ (tas pats kaip Parametrai → Ekranas → Grafika) ir paleisti ją iš naujo? (Grįžus prie nešiojamo ekrano programa pati pasiūlys grįžti.)"
+                                   : "This screen (e.g. a monitor on HDMI) is driven by the NVIDIA graphics card, but Windows started this app on the integrated one, so the screen cannot be captured.\n\nSet this app to “High performance” (the same as Settings → Display → Graphics) and restart it? (Back on the laptop screen the app offers to switch back.)";
+            WrongGpuStuck = lt ? "Ekrano nufilmuoti nepavyksta net su tinkama vaizdo plokšte. Parametrai → Ekranas → Grafika: CastLink nustatyk „Leisti Windows nuspręsti“ ir paleisk iš naujo."
+                               : "The screen still cannot be captured on the right graphics card. Settings → Display → Graphics: set CastLink to “Let Windows decide” and restart it.";
             ViewerSlow = lt ? "Žiūrovas atsijungė: Wi-Fi nespėjo priimti vaizdo" : "The viewer disconnected: the Wi-Fi could not keep up";
             ViewerLeft = lt ? "Žiūrovas atsijungė" : "The viewer disconnected";
             CodeWrong = lt ? "Neteisingas kodas iš {0}" : "Wrong code from {0}";
@@ -2824,13 +2835,29 @@ namespace TVCast
             return true;
         }
 
-        void AskGpuFix()
+        /// <summary>the Windows graphics preference that puts the app on the card that drives the
+        /// screen: 2 "High performance" for the NVIDIA card (a monitor on a hybrid laptop's HDMI
+        /// port), 1 "Power saving" for the integrated one (the laptop panel). Unit-tested.</summary>
+        internal static int WantedGpuPreference(bool nvidiaDrivesScreen)
         {
-            if (MessageBox.Show(this, Texts.WrongGpuAsk, Texts.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            return nvidiaDrivesScreen ? 2 : 1;
+        }
+
+        void AskGpuFix(bool nvidiaDrivesScreen)
+        {
+            int want = WantedGpuPreference(nvidiaDrivesScreen);
+            if (GpuPreference() == want)
+            {
+                // already set: restarting again would only bring the same question back
+                Say(Texts.WrongGpuStuck, Ui.Danger);
+                return;
+            }
+            if (MessageBox.Show(this, nvidiaDrivesScreen ? Texts.WrongGpuAskNvidia : Texts.WrongGpuAsk, Texts.Title,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             try
             {
                 using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\DirectX\UserGpuPreferences"))
-                    k.SetValue(Application.ExecutablePath, "GpuPreference=1;");
+                    k.SetValue(Application.ExecutablePath, "GpuPreference=" + want + ";");
             }
             catch (Exception e) { Say(e.Message, Ui.Danger); return; }
             StopCast();
@@ -3075,7 +3102,8 @@ namespace TVCast
             if (caster.WrongGpu && !askedGpu && !noAsk)
             {
                 askedGpu = true;
-                BeginInvoke((MethodInvoker)AskGpuFix);
+                bool nvidia = caster.WrongGpuNvidia;
+                BeginInvoke((MethodInvoker)delegate { AskGpuFix(nvidia); });
             }
             // a virtual screen on the integrated card's encoder: offer the faster NVIDIA one
             if (!askedFastGpu && !noAsk && !string.IsNullOrEmpty(caster.EncoderName))
