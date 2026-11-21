@@ -4,10 +4,11 @@
 
 # TV Launcher + CastLink
 
-**A light home screen for Google TV, and encrypted low-latency screen casting<br>from your phone or PC to the TV, from the PC to a phone, or to an iPad or a Mac.**
+**A light home screen for Google TV, and encrypted low-latency screen casting<br>from your phone, Windows PC or Mac to the TV or a phone, and from the PC or Mac to an iPad.**
 
 ![Android TV](https://img.shields.io/badge/Android_TV-8%2B-3DDC84?logo=android&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-13%2B_Intel-000000?logo=apple&logoColor=white)
 ![iPad and Mac](https://img.shields.io/badge/iPad_%7C_Mac-Safari-999999?logo=apple&logoColor=white)
 ![Latency](https://img.shields.io/badge/latency-~60_ms-orange)
 ![FPS](https://img.shields.io/badge/60_%7C_120-frames%2Fs-blueviolet)
@@ -52,6 +53,7 @@ Your phone or PC screen on the TV, or the PC on your phone.
 - 🔢 Type with the remote's number keys, like an old phone
 - 📱 PC → phone with touch control; over the **USB cable at 120 frames/s**
 - 🖥️ Windows open on the screen you clicked from
+- 🍎 A **Mac** can cast too: its screen, or a virtual screen shaped like the TV or phone
 - 🎮 Switches the TV to **Game** picture mode; sound included
 - 🔍 Finds the TV by itself; home network only, no open router ports
 
@@ -107,7 +109,8 @@ The PC on an iPad or a Mac, in Safari.
 | 📺 | **CastLink** for the TV (receiver) | Android TV / Google TV 11+ | `CastLink-TV-<version>.apk` |
 | 📱 | **CastLink** for the phone (sender, and receiver for the PC) | Android phone 10+ | `CastLink-Phone-<version>.apk` |
 | 💻 | **CastLink** for the PC (sender, also to the iPad and Mac) | Windows 10/11, 64-bit, portable | `CastLink-PC-<version>.zip` |
-| 📲 | iPad / Mac viewer | Safari on iPadOS 13+ or macOS (16.4+ keeps the screen on) | — served by the PC app |
+| 🍎 | **CastLink** for the Mac (sender to the TV, a phone or an iPad) | macOS 13+, Intel (Apple Silicon through Rosetta 2) | `CastLink-Mac-<version>.dmg` |
+| 📲 | iPad / Mac viewer | Safari on iPadOS 13+ or macOS (16.4+ keeps the screen on) | — served by the PC or Mac app |
 
 > [!TIP]
 > Just want to use them? Take the files from the [**latest release**](../../releases/latest)
@@ -155,6 +158,27 @@ for the Mac), it runs over HTTPS, keeps the screen on and opens full screen: fro
 home screen, or on a Mac with **Add to Dock**. The certificate can only vouch for local network
 addresses; the code is locked after 5 wrong tries; only private addresses are answered.
 User guide: [docs/ipad.md](docs/ipad.md). Design and security: [docs/screen-cast.md](docs/screen-cast.md#pc--ipad-in-safari).
+
+</details>
+
+<details>
+<summary><b>🍎 CastLink for the Mac in more detail</b></summary>
+
+`CastLink-Mac-<version>.dmg` casts this Mac's screen, or a **virtual second screen**, to the TV or an
+Android phone (the same encrypted protocol and pairing code as the PC app), or to an iPad, a phone or another
+computer in the browser (the same page as the PC app). The virtual screen takes the receiver's shape, so the
+picture fills the TV or phone. A phone controls the Mac by touch, a TV by its mouse and keyboard (also with the
+TV's own pointer); when a virtual screen's cast ends, its windows come back to the main screen.
+
+1. Open the `.dmg` and drag CastLink to Applications.
+2. The app is **self-signed, not notarized**, so macOS says it cannot verify the developer. Open it once, then
+   **System Settings → Privacy & Security → Open Anyway** (on macOS 14 and older, right-click → Open also works).
+3. Allow **Screen & System Audio Recording**, and **Accessibility** if a phone or TV should control the Mac; quit
+   and reopen CastLink after allowing.
+
+The release build is for **Intel Macs**; on Apple Silicon macOS installs Rosetta 2 on first launch. Build it
+yourself with `cast/mac/build.sh` (macOS 13+, Xcode Command Line Tools). Not yet on the Mac: the `https://` page
+and WebRTC. Details: [cast/mac/README.md](cast/mac/README.md).
 
 </details>
 
@@ -231,8 +255,9 @@ The full threat table and what was attacked live: [docs/screen-cast.md](docs/scr
 | #️⃣ C# | 70 | **Encryption: the same golden keys, code and sealed bytes as the Java side**, protocol bytes, colours, mDNS, settings, USB cable route and firewall script, typing only on the shown screen, windows moved back, picture size, input decoding; iPad server: MP4, HTTP / WebSocket, DNS-rebinding and code-guessing protection, certificate, WebRTC filters, RTP, NACK |
 | 📲 iPad / Mac page | 30 | The page's JavaScript **in headless Chrome or Edge**: touch → PC coordinates, input bytes, jitter buffer, sound buffer, MP4 reading, setup guides and drawings (iPad, Mac), physical keyboard |
 | 📜 PowerShell | all | Every script parses |
+| 🍎 Swift (macOS) | 147 | The Mac app's plain-Swift core, on a Mac with `cast/mac/build.sh`: the same cases as the C# suite (MP4 boxes, WebSocket and HTTP checks, code throttle, input decoding) |
 
-`release.ps1` runs them before every release. More: [docs/development.md](docs/development.md#tests),
+`release.ps1` runs the first four before every release; the Swift tests run on the Mac. More: [docs/development.md](docs/development.md#tests),
 [docs/ipad.md](docs/ipad.md#tests).
 
 ## 🚀 Build from source
@@ -250,6 +275,9 @@ libraries are fetched from NuGet and checked by hash on the first build
 .\tests\run-tests.ps1             # 175 tests
 ```
 
+On a Mac (13+, Xcode Command Line Tools): `cd cast/mac && ./build.sh` runs the Swift tests and builds
+`build/CastLink.app` and `build/CastLink.dmg`.
+
 Run the scripts with `powershell -ExecutionPolicy Bypass -File <script>`. Requirements,
 the signing key and the release process: [docs/development.md](docs/development.md).
 
@@ -261,6 +289,7 @@ the signing key and the release process: [docs/development.md](docs/development.
 | 🏠 | [docs/launcher.md](docs/launcher.md) | Using the launcher, making Home open it on Google TV, recovery after a firmware update, undo |
 | 📡 | [docs/screen-cast.md](docs/screen-cast.md) | Using the cast, design, protocol, measured latency, WebRTC, security model |
 | 📲 | [docs/ipad.md](docs/ipad.md) | iPad and Mac user guide: setup, controls, info line, troubleshooting, tests |
+| 🍎 | [cast/mac/README.md](cast/mac/README.md) | The Mac app: build, permissions, how it differs from the Windows one |
 | 🖥️ | [Wireless Display Receiver](https://github.com/p3perLTU/wireless-display-receiver) | A separate, public project: a Miracast / Samsung DeX wireless receiver for the TV (its own repository, build and tests) |
 | 🛠️ | [docs/development.md](docs/development.md) | Requirements, building, signing, tests, releases, code layout |
 
@@ -280,7 +309,8 @@ cast/pc/AppIcon.cs                         the CastLink icon, drawn in code
 cast/pc/WebCast.cs, Fmp4.cs, RemoteInput.cs iPad mode: web server, MP4 fragments, touch -> mouse/keyboard
 cast/pc/WebRtc.cs                          iPad mode: WebRTC (UDP) with packet resend and pacing
 cast/pc/LocalTls.cs                        iPad mode: the PC's own certificate authority for HTTPS
-cast/pc/web/ipad.html                      the iPad / Mac page (embedded in the exe)
+cast/pc/web/ipad.html                      the iPad / Mac page (embedded in the exe and in the Mac app)
+cast/mac/                                  CastLink for the Mac (Swift): capture, virtual screen, encoder, input, windows home
 cast/pc/restore-packages.ps1               fetches the WebRTC libraries (NuGet, hash-checked) into cast/pc/lib
 tests/                                     Java, C# and iPad-page tests, tests/run-tests.ps1
 docs/                                      documentation
