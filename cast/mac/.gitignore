@@ -1,0 +1,14 @@
+.build/
+.swiftpm/
+Sources/CastLinkMac/Page.generated.swift
+castlink-mac
+build.log
+ipad.html
+build/
+.DS_Store
+*.dmg
+*.app
+*.log
+*.p12
+*.pem
+castlink-android-keyboard.patch
