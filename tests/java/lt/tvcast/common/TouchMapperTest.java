@@ -81,6 +81,23 @@ final class TouchMapperTest {
         assertEquals(65535, br[1], "beyond the bottom y");
     }
 
+    static void testHoverNearTheEdgeSnapsButTheClickDoesNot() {
+        java.util.List<byte[]> sent = new java.util.ArrayList<>();
+        TouchMapper m = new TouchMapper(2f, msg -> sent.add(msg)); // 10 dp = 20 px
+        m.setArea(0, 0, 2000, 1000);
+        assertEquals(0, m.hover(500, 15)[1], "15 px from the top hovers at the top edge");
+        assertEquals(65535, m.hover(500, 985)[1], "15 px from the bottom hovers at the bottom edge");
+        assertEquals(0, m.hover(10, 500)[0], "near the left edge");
+        int off = m.hover(500, 100)[1];
+        assertEquals(true, off > 5000 && off < 8000, "100 px from the top is not the edge");
+        int click = m.norm(500, 15)[1];
+        assertEquals(true, click > 700 && click < 1200, "a click 15 px from the top stays exactly there");
+        m.start(500, 15, 0); // a quick tap: hover at the edge, then the click where the finger is
+        m.end(0, 50);
+        assertEquals(0, ((sent.get(0)[3] & 0xFF) << 8) | (sent.get(0)[4] & 0xFF), "the hover is at the edge");
+        assertEquals(click, ((sent.get(1)[5] & 0xFF) << 8) | (sent.get(1)[6] & 0xFF), "the click is not snapped");
+    }
+
     static void testCancelReleasesAHeldButton() {
         TouchMapper m = mapper();
         m.start(100, 100, 0);

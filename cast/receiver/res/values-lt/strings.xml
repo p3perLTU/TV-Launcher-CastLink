@@ -18,6 +18,9 @@
     <string name="g_two">2 pirštai</string>
     <string name="g_two_does">Braukti – slinkti</string>
     <string name="g_three">3 pirštai</string>
+    <string name="g_three_does">Klaviatūra</string>
+    <string name="g_four">4 pirštai</string>
+    <string name="g_four_does">Laikyk 3 s – statistika</string>
     <string name="g_note">Jei kompiuteryje valdymas išjungtas, telefonas tik rodo vaizdą.</string>
     <string name="pair_title">Ar %1$s rodo šį kodą?</string>
     <string name="pair_other">kitas įrenginys</string>

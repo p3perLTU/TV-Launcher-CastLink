@@ -18,6 +18,9 @@
     <string name="g_two">2 fingers</string>
     <string name="g_two_does">Swipe to scroll</string>
     <string name="g_three">3 fingers</string>
+    <string name="g_three_does">Keyboard</string>
+    <string name="g_four">4 fingers</string>
+    <string name="g_four_does">Hold 3 s: statistics</string>
     <string name="g_note">With control off on the PC, the phone only shows the picture.</string>
     <string name="pair_title">Does %1$s show this code?</string>
     <string name="pair_other">the other device</string>

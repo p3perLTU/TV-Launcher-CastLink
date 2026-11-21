@@ -179,7 +179,7 @@ namespace TVCast
                     // click, a drag) and then goes back to where the PC's user had it; a bare move
                     // just remembers the spot (for the wheel), so the pointer doesn't wander off
                     lastX = e.X; lastY = e.Y;
-                    if (!(held[0] || held[1] || held[2])) break;
+                    if (BorrowPointer && !(held[0] || held[1] || held[2])) break;
                     p = Where(e, out at);
                     Send(Mouse(MOVE | at, p[0], p[1], 0));
                     break;
@@ -187,14 +187,14 @@ namespace TVCast
                     uint f = e.Button == 0 ? (e.Down ? LEFTDOWN : LEFTUP)
                            : e.Button == 1 ? (e.Down ? RIGHTDOWN : RIGHTUP)
                            : (e.Down ? MIDDLEDOWN : MIDDLEUP);
-                    if (e.Down && !(held[0] || held[1] || held[2]) && !saved) saved = GetCursorPos(out savedAt);
+                    if (BorrowPointer && e.Down && !(held[0] || held[1] || held[2]) && !saved) saved = GetCursorPos(out savedAt);
                     held[e.Button] = e.Down;
                     lastX = e.X; lastY = e.Y;
                     // noted before the click is sent: Windows may activate the window at once
-                    Clicked(true);
+                    Clicked(BorrowPointer);
                     p = Where(e, out at);
                     Send(Mouse(MOVE | at, p[0], p[1], 0), Mouse(f | at, p[0], p[1], 0));
-                    if (!e.Down && !(held[0] || held[1] || held[2])) { Clicked(true); PutBack(); }
+                    if (!e.Down && !(held[0] || held[1] || held[2])) { Clicked(BorrowPointer); PutBack(); }
                     break;
                 case InputKind.MoveBy:
                     // relative, like a real mouse: Windows applies its pointer speed and the
@@ -234,7 +234,7 @@ namespace TVCast
                 case InputKind.Wheel:
                     // where the finger last was, not where the PC's own pointer is
                     bool inDrag = held[0] || held[1] || held[2];
-                    if (!inDrag && !saved) saved = GetCursorPos(out savedAt);
+                    if (BorrowPointer && !inDrag && !saved) saved = GetCursorPos(out savedAt);
                     p = Where(new InputEvent { X = lastX, Y = lastY }, out at);
                     Send(Mouse(MOVE | at, p[0], p[1], 0));
                     if (e.WheelY != 0) Send(Mouse(WHEEL, 0, 0, e.WheelY));
@@ -327,6 +327,14 @@ namespace TVCast
         static POINT savedAt;
         static int lastX = 32768, lastY = 32768; // the phone / iPad finger's last spot (0..65535)
         static bool saved;
+
+        /// <summary>
+        /// false (default): a phone / iPad finger moves the PC's pointer and it stays where the finger
+        /// left it, like a real mouse (a click no longer jumps back). true: the old behaviour, the pointer
+        /// is only borrowed for a click / drag / wheel and then goes back to the PC user's spot.
+        /// The TV's own pointer (ClickAt / WheelAt) always borrows.
+        /// </summary>
+        public static volatile bool BorrowPointer;
 
         static void PutBack()
         {

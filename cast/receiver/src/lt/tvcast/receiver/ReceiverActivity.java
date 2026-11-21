@@ -288,15 +288,136 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         };
         arrow.setVisibility(View.GONE);
         root.addView(arrow, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (onPhone) addSoftKeyboard();
         setContentView(root);
 
-        nsd = getSystemService(NsdManager.class);
+        nsd =getSystemService(NsdManager.class);
         WifiManager wm = getApplicationContext().getSystemService(WifiManager.class);
         wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, TAG);
         wifiLock.setReferenceCounted(false);
     }
 
     private boolean onPhone;
+
+    // ---- the phone's on-screen keyboard: types into the PC's focused field -------------------
+    private View keyCatcher;
+    private TextView kbButton;
+    private boolean kbOpen;
+
+    /** A small keyboard button (shown while the PC allows control) and an invisible view that
+     *  receives the on-screen keyboard's input and sends it to the PC like a real keyboard. */
+    private void addSoftKeyboard() {
+        keyCatcher = new View(this) {
+            @Override public boolean onCheckIsTextEditor() { return true; }
+            @Override public android.view.inputmethod.InputConnection onCreateInputConnection(android.view.inputmethod.EditorInfo out) {
+                out.inputType = android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD; // no composing, no suggestions
+                out.imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN
+                        | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                        | android.view.inputmethod.EditorInfo.IME_ACTION_NONE;
+                return new android.view.inputmethod.BaseInputConnection(this, false) {
+                    @Override public boolean commitText(CharSequence t, int pos) {
+                        if (deskLive() && t != null) {
+                            String[] parts = t.toString().split("\n", -1); // Enter may arrive as text
+                            for (int i = 0; i < parts.length; i++) {
+                                if (i > 0) desk().key(KeyEvent.KEYCODE_ENTER, 0, false);
+                                if (!parts[i].isEmpty()) desk().text(parts[i]);
+                            }
+                        }
+                        return true;
+                    }
+                    @Override public boolean setComposingText(CharSequence t, int pos) { return commitText(t, pos); }
+                    @Override public boolean deleteSurroundingText(int before, int after) {
+                        if (deskLive()) for (int i = 0; i < Math.max(1, before); i++) desk().key(KeyEvent.KEYCODE_DEL, 0, false);
+                        return true;
+                    }
+                    @Override public boolean performEditorAction(int action) {
+                        if (deskLive()) desk().key(KeyEvent.KEYCODE_ENTER, 0, false);
+                        return true;
+                    }
+                    @Override public boolean sendKeyEvent(KeyEvent e) {
+                        if (deskLive() && e.getAction() == KeyEvent.ACTION_DOWN) {
+                            int ch = e.getUnicodeChar(e.getMetaState() & (KeyEvent.META_SHIFT_MASK | KeyEvent.META_CAPS_LOCK_ON));
+                            desk().key(e.getKeyCode(), ch, false);
+                        }
+                        return true;
+                    }
+                };
+            }
+        };
+        keyCatcher.setFocusable(true);
+        keyCatcher.setFocusableInTouchMode(true);
+        root.addView(keyCatcher, new FrameLayout.LayoutParams(1, 1));
+
+        kbButton = Look.text(this, "⌨", 22, Look.INK, true);
+        kbButton.setBackground(glass(24));
+        kbButton.setGravity(Gravity.CENTER);
+        kbButton.setVisibility(View.GONE);
+        // not on screen until four fingers touch it; it hides again a few seconds after the last use
+        kbButton.setOnClickListener(v -> {
+            toggleSoftKeyboard();
+            showKbButton();
+        });
+        FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.BOTTOM | Gravity.END);
+        kp.rightMargin = kp.bottomMargin = dp(16);
+        root.addView(kbButton, kp);
+        // the real keyboard state (the user can hide it with Back): kbOpen follows it
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            if (android.os.Build.VERSION.SDK_INT >= 30) kbOpen = insets.isVisible(android.view.WindowInsets.Type.ime());
+            return v.onApplyWindowInsets(insets);
+        });
+        keyboardPoll.run();
+    }
+
+    private final Runnable keyboardPoll = new Runnable() {
+        @Override public void run() {
+            boolean live = deskLive();
+            if (kbButton != null && !live) { kbShown = false; kbButton.setVisibility(View.GONE); }
+            if (!live && kbOpen) toggleSoftKeyboard();
+            ui.postDelayed(this, 500);
+        }
+    };
+
+    private boolean kbShown;
+    // multi-finger gestures: the most fingers down in this touch, when it began
+    private int gestureMax;
+    private long gestureDownAt;
+    private final Runnable statsHold = () ->
+            stats.setVisibility(stats.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+
+    private final Runnable hideKbButton = new Runnable() {
+        @Override public void run() {
+            if (kbOpen) { ui.postDelayed(this, 4000); return; } // stays while the keyboard is open
+            kbShown = false;
+            kbButton.setVisibility(View.GONE);
+        }
+    };
+
+    /** four fingers (or a tap on the button) show the keyboard button for a few seconds */
+    private void showKbButton() {
+        if (kbButton == null || !deskLive()) return;
+        kbShown = true;
+        kbButton.setVisibility(View.VISIBLE);
+        ui.removeCallbacks(hideKbButton);
+        ui.postDelayed(hideKbButton, 4000);
+    }
+
+    private void setSoftKeyboard(boolean open) {
+        if (open != kbOpen) toggleSoftKeyboard();
+    }
+
+    private void toggleSoftKeyboard() {
+        android.view.inputmethod.InputMethodManager imm = getSystemService(android.view.inputmethod.InputMethodManager.class);
+        if (imm == null || keyCatcher == null) return;
+        if (kbOpen) {
+            imm.hideSoftInputFromWindow(keyCatcher.getWindowToken(), 0);
+            kbOpen = false;
+        } else {
+            keyCatcher.requestFocus();
+            imm.showSoftInput(keyCatcher, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
+            kbOpen = true;
+        }
+    }
 
     @SuppressWarnings("deprecation")
     private void immersive() {
@@ -339,10 +460,25 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
             return true;
         }
         boolean live = streaming && control && token != null;
-        // only three fingers show / hide the statistics (a tap never does, also with control off)
+        // Three-finger tap: the keyboard button. Four fingers held for 3 s: show / hide the statistics
+        // (a plain tap never does, also with control off). Both work with or without control, except the
+        // keyboard button, which needs control.
+        if (a == android.view.MotionEvent.ACTION_DOWN) { gestureMax = 1; gestureDownAt = SystemClock.uptimeMillis(); }
+        gestureMax = Math.max(gestureMax, n);
         if (a == android.view.MotionEvent.ACTION_POINTER_DOWN && n == 3) {
             if (touch != null && live) touch.cancel();
-            stats.setVisibility(stats.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+            return true;
+        }
+        if (a == android.view.MotionEvent.ACTION_POINTER_DOWN && n == 4) {
+            ui.removeCallbacks(statsHold);
+            ui.postDelayed(statsHold, 3000);
+            return true;
+        }
+        if (gestureMax >= 3) { // the rest of a 3 / 4-finger gesture never reaches the PC
+            if (a == android.view.MotionEvent.ACTION_POINTER_UP || a == android.view.MotionEvent.ACTION_UP
+                    || a == android.view.MotionEvent.ACTION_CANCEL) ui.removeCallbacks(statsHold);
+            if (a == android.view.MotionEvent.ACTION_UP && gestureMax == 3 && live
+                    && SystemClock.uptimeMillis() - gestureDownAt < 700) showKbButton();
             return true;
         }
         if (!live) return true;
@@ -868,7 +1004,8 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         helpRow(touch, getString(R.string.g_drag), getString(R.string.g_drag_does), 92);
         helpRow(touch, getString(R.string.g_hold), getString(R.string.g_hold_does), 92);
         helpRow(touch, getString(R.string.g_two), getString(R.string.g_two_does), 92);
-        helpRow(touch, getString(R.string.g_three), getString(R.string.k_ok), 92);
+        helpRow(touch, getString(R.string.g_three), getString(R.string.g_three_does), 92);
+        helpRow(touch, getString(R.string.g_four), getString(R.string.g_four_does), 92);
         helpRow(touch, getString(R.string.k_back_key), getString(R.string.k_back), 92);
         TextView note = Look.text(this, getString(R.string.g_note), 12, Look.FAINT, false);
         note.setPadding(0, dp(10), 0, 0);

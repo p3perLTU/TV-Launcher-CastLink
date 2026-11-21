@@ -50,12 +50,29 @@ public final class TouchMapper {
         return new int[] { Math.max(0, Math.min(65535, nx)), Math.max(0, Math.min(65535, ny)) };
     }
 
+    /** a finger this close (dp) to the picture's edge hovers at the very edge: a Mac's menu bar and
+     *  window buttons (full screen) only appear with the pointer at y = 0, which a finger hardly hits.
+     *  Only the hover snaps; a click stays exactly where the finger is (the buttons are in that zone). */
+    public static final float EDGE_SNAP_DP = 10;
+
+    /** where the pointer hovers when a finger touches: like {@link #norm}, snapped to a near edge */
+    public int[] hover(float x, float y) {
+        return new int[] { hover1(x - areaX, areaW), hover1(y - areaY, areaH) };
+    }
+
+    private int hover1(float v, float len) {
+        float snap = Math.min(EDGE_SNAP_DP * density, len / 4);
+        if (v <= snap) return 0;
+        if (v >= len - snap) return 65535;
+        return Math.max(0, Math.min(65535, Math.round(v / len * 65535)));
+    }
+
     /** the first finger touches */
     public void start(float x, float y, long t) {
         one = true; drag = false; done = false; two = false;
         startX = x; startY = y; startAt = t;
         p = norm(x, y);
-        out.send(move(p));
+        out.send(move(hover(x, y)));
     }
 
     /** a second finger joins (cx, cy: between the two) */
