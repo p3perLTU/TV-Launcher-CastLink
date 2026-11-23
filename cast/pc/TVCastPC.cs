@@ -2102,8 +2102,8 @@ namespace TVCast
                              : "Mouse and whole keyboard control the other PC (if allowed) · Ctrl+Alt+Enter: window";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
-            SendHeader = lt ? "SIŲSTI  ·  {0}  →  KITAS KOMPIUTERIS" : "SEND  ·  {0}  →  ANOTHER PC";
-            GetHeader = lt ? "GAUTI  ·  KITAS KOMPIUTERIS  →  {0}" : "RECEIVE  ·  ANOTHER PC  →  {0}";
+            SendHeader = lt ? "SIŲSTI EKRANĄ" : "SEND SCREEN";
+            GetHeader = lt ? "GAUTI EKRANĄ" : "RECEIVE SCREEN";
             ShowPc = lt ? "Rodyti {0} ekraną kompiuteryje {1}" : "Show {0}'s screen on {1}";
             ShowPcNone = lt ? "Pirma pasirink kompiuterį, kuriame rodyti" : "First pick the PC to show it on";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
@@ -2638,7 +2638,7 @@ namespace TVCast
             // this PC and other PCs: top half sends this screen to another PC, bottom half waits
             // for another PC to show its screen here
             Font headerFont = new Font("Segoe UI Semibold", 8.5f);
-            sendHeader.Text = string.Format(Texts.SendHeader, Environment.MachineName.ToUpperInvariant());
+            sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
             sendHeader.Location = Ui.P(16, 50);
             sendHeader.AutoSize = true;
@@ -2666,7 +2666,7 @@ namespace TVCast
             pcGoBtn.Click += delegate { Toggle(true); };
             pcDivider.AutoSize = false;
             pcDivider.SetBounds(Ui.S(16), Ui.S(222), Ui.S(PW - 32), 1);
-            getHeader.Text = string.Format(Texts.GetHeader, Environment.MachineName.ToUpperInvariant());
+            getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
             getHeader.Location = Ui.P(16, 234);
             getHeader.AutoSize = true;
