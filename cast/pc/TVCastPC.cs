@@ -641,13 +641,21 @@ namespace TVCast
     {
         /// <summary>BGRA (sw x sh) -> NV12 (dw x dh, nearest-neighbour scaling), BT.709 limited
         /// range, with the pointer blended in.</summary>
-        public static unsafe void Convert(byte[] src, int sw, int sh, byte[] dst, int dw, int dh, Pointer p)
+        public static void Convert(byte[] src, int sw, int sh, byte[] dst, int dw, int dh, Pointer p)
+        {
+            GCHandle hd = GCHandle.Alloc(dst, GCHandleType.Pinned);
+            try { Convert(src, sw, sh, hd.AddrOfPinnedObject(), dw, dh, p); }
+            finally { hd.Free(); }
+        }
+
+        /// <summary>the same into memory the encoder owns (its input buffer, filled ahead of time)</summary>
+        public static unsafe void Convert(byte[] src, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
         {
             int[] xs = new int[dw], ys = new int[dh];
             for (int x = 0; x < dw; x++) xs[x] = (int)((long)x * sw / dw);
             for (int y = 0; y < dh; y++) ys[y] = (int)((long)y * sh / dh);
-            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned), hd = GCHandle.Alloc(dst, GCHandleType.Pinned);
-            IntPtr ps = hs.AddrOfPinnedObject(), pd = hd.AddrOfPinnedObject();
+            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned);
+            IntPtr ps = hs.AddrOfPinnedObject();
             bool cur = p != null && p.Visible && p.Px != null;
             int cx = cur ? p.X : 0, cy = cur ? p.Y : 0, cw = cur ? p.W : 0, ch = cur ? p.H : 0;
             byte[] cpx = cur ? p.Px : null;
@@ -687,7 +695,6 @@ namespace TVCast
             finally
             {
                 hs.Free();
-                hd.Free();
             }
         }
     }
@@ -741,6 +748,8 @@ namespace TVCast
         byte[] csd;
         public readonly string Name;
         public readonly bool Hardware;
+        /// <summary>tests / measuring: the encoder whose name contains this goes first (null: NVIDIA)</summary>
+        public static string Prefer;
 
         /// <summary>Tries the hardware encoders (NVIDIA first), then the Windows software one.
         /// On a hybrid laptop only the encoder of the GPU this process runs on may start (the
@@ -864,7 +873,7 @@ namespace TVCast
                     Native.CoTaskMemFree(s);
                 }
                 KeyValuePair<IntPtr, string> e = new KeyValuePair<IntPtr, string>(a, nm);
-                if (nm.IndexOf("NVIDIA", StringComparison.OrdinalIgnoreCase) >= 0) list.Insert(0, e);
+                if (nm.IndexOf(Prefer ?? "NVIDIA", StringComparison.OrdinalIgnoreCase) >= 0) list.Insert(0, e);
                 else list.Add(e);
             }
             Native.CoTaskMemFree(acts);
@@ -910,21 +919,41 @@ namespace TVCast
 
         public void Input(byte[] nv12, long ptsMicros, bool forceKey)
         {
-            IntPtr buf, sample;
-            Com.Check(Native.MFCreateMemoryBuffer((uint)nv12.Length, out buf), "MFCreateMemoryBuffer");
-            IntPtr p; uint max, cur;
-            Com.F<D_Lock>(buf, 3)(buf, out p, out max, out cur);
+            IntPtr buf, p;
+            NewFrame(nv12.Length, out buf, out p);
             Marshal.Copy(nv12, 0, p, nv12.Length);
-            Com.F<D_Self>(buf, 4)(buf);
-            Com.F<D_SetLen>(buf, 6)(buf, (uint)nv12.Length);
+            IntPtr sample = FinishFrame(buf, nv12.Length, ptsMicros);
+            InputSample(ref sample, forceKey);
+        }
+
+        /// <summary>an input buffer, locked: the picture is written straight into it (no copy)</summary>
+        public void NewFrame(int len, out IntPtr buf, out IntPtr data)
+        {
+            Com.Check(Native.MFCreateMemoryBuffer((uint)len, out buf), "MFCreateMemoryBuffer");
+            uint max, cur;
+            Com.F<D_Lock>(buf, 3)(buf, out data, out max, out cur);
+        }
+
+        /// <summary>unlocks the buffer and wraps it in a sample ready for InputSample</summary>
+        public IntPtr FinishFrame(IntPtr buf, int len, long ptsMicros)
+        {
+            IntPtr sample;
+            Com.F<D_Self>(buf, 4)(buf); // Unlock
+            Com.F<D_SetLen>(buf, 6)(buf, (uint)len);
             Native.MFCreateSample(out sample);
             Com.F<D_Buf>(sample, 42)(sample, buf);
+            Com.Release(ref buf);
             Com.F<D_SetI64>(sample, 36)(sample, ptsMicros * 10);
             Com.F<D_SetI64>(sample, 38)(sample, 10000000L / fps);
+            return sample;
+        }
+
+        /// <summary>hands a prepared sample to the encoder and releases it</summary>
+        public void InputSample(ref IntPtr sample, bool forceKey)
+        {
             if (forceKey) SetCodec(API_ForceKey, 19, 1);
             int hr = Com.F<D_PIn>(mft, 24)(mft, 0, sample, 0);
             Com.Release(ref sample);
-            Com.Release(ref buf);
             Com.Check(hr, "ProcessInput");
             if (async) credits--;
         }
@@ -1492,6 +1521,13 @@ namespace TVCast
                     Status = "";
                     bool dirty = false, have = false;
                     long nextSlot = 0, lastEncode = 0, pts = 0;
+                    // the next frame, converted straight into an encoder buffer while the encoder
+                    // is still busy with the last one: capture + conversion no longer add to each
+                    // frame's time (the AMD encoder went from ~93 to its own ~120 a second)
+                    IntPtr ready = IntPtr.Zero;
+                    long readyPts = 0, readyAt = 0;
+                    try
+                    {
                     while (on && !restartVideo)
                     {
                         int got = cap.Acquire(2);
@@ -1505,20 +1541,29 @@ namespace TVCast
                         // changed" frames): with 5-6 fps Safari's player ran out of picture and stopped
                         // for up to 10 s, waiting for enough to play.
                         bool webIdle = web != null && have && now - lastEncode > 100000;
-                        if (((dirty && now >= nextSlot) || keyIdle || webIdle) && enc.CanTakeInput)
+                        if (((dirty && now >= nextSlot) || keyIdle || webIdle) && ready == IntPtr.Zero)
                         {
                             long c0 = Clock.Nanos();
-                            Nv12.Convert(cap.Bgra, cap.W, cap.H, nv12, w, h, ptr);
+                            IntPtr buf, data;
+                            enc.NewFrame(nv12.Length, out buf, out data);
+                            try { Nv12.Convert(cap.Bgra, cap.W, cap.H, data, w, h, ptr); }
+                            catch { Com.F<D_Self>(buf, 4)(buf); Com.Release(ref buf); throw; }
                             long c1 = Clock.Nanos();
                             Interlocked.Add(ref ConvNs, c1 - c0);
                             Interlocked.Increment(ref ConvN);
                             if (!dirty) pts = Clock.Micros();
-                            bool key = keyWanted;
-                            keyWanted = false;
-                            inputAt[pts] = c1;
-                            enc.Input(nv12, pts, key);
+                            ready = enc.FinishFrame(buf, nv12.Length, pts);
+                            readyPts = pts;
+                            readyAt = c1;
                             dirty = false;
                             lastEncode = now;
+                        }
+                        if (ready != IntPtr.Zero && enc.CanTakeInput)
+                        {
+                            bool key = keyWanted;
+                            keyWanted = false;
+                            inputAt[readyPts] = readyAt;
+                            enc.InputSample(ref ready, key);
                             // even spacing: running late skips a slot instead of sending two frames
                             // close together (a burst leaves the TV decoder one frame behind for seconds)
                             nextSlot += 1000000 / fps;
@@ -1526,6 +1571,8 @@ namespace TVCast
                             enc.Pump(SendFrame);
                         }
                     }
+                    }
+                    finally { Com.Release(ref ready); }
                 }
             }
         }
