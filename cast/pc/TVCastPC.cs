@@ -2886,6 +2886,7 @@ namespace TVCast
         {
             for (int i = 0; i < pages.Length; i++) { pages[i].Visible = i == n; nav[i].Selected = i == n; }
             if (n == 2) FillScreens();
+            if (n == 3 && caster == null && receiver == null && !searching && pcBox.Items.Count == 0) Search(false, true);
         }
 
         /// <summary>first line = the state next to the dot, the rest = grey details</summary>
@@ -2930,24 +2931,50 @@ namespace TVCast
 
         /// <param name="pick">true when the user pressed Find: the first device found is picked;
         /// the search when the app opens only fills the list, the field stays empty</param>
-        void Search(bool pick = true)
+        bool searching;
+        int pcSearchWait;
+
+        /// <summary>while the PC page is open and no PC is listed, look again every few seconds in
+        /// the background, so the first PC shows up by itself once it waits for a connection</summary>
+        void AutoFindPcs()
         {
-            findBtn.Enabled = pcFindBtn.Enabled = false;
-            Say(Texts.Searching, Ui.Waiting);
+            if (caster != null || receiver != null || searching || !recvPage.Visible || pcBox.Items.Count > 0) { pcSearchWait = 0; return; }
+            if (++pcSearchWait < 3) return;
+            pcSearchWait = 0;
+            Search(false, true);
+        }
+
+        /// <summary>quiet = a background look: the buttons and the status line stay as they are
+        /// unless something new turns up</summary>
+        void Search(bool pick = true, bool quiet = false)
+        {
+            searching = true;
+            if (!quiet)
+            {
+                findBtn.Enabled = pcFindBtn.Enabled = false;
+                Say(Texts.Searching, Ui.Waiting);
+            }
             ThreadPool.QueueUserWorkItem(delegate
             {
                 List<KeyValuePair<string, IPAddress>> found = Discovery.Find(1500);
                 BeginInvoke((MethodInvoker)delegate
                 {
-                    findBtn.Enabled = true;
-                    pcFindBtn.Enabled = true;
+                    searching = false;
+                    if (quiet && found.Count == 0) return;
+                    if (caster == null) findBtn.Enabled = pcFindBtn.Enabled = true;
                     // PCs go to the "This PC" page, TVs and phones to the CastLink app page
+                    string prevPc = pcBox.Text;
                     tvBox.Items.Clear();
                     pcBox.Items.Clear();
                     foreach (KeyValuePair<string, IPAddress> f in found)
                         (Discovery.IsPc(f.Value) ? pcBox : tvBox).Items.Add(f.Key + " (" + f.Value + ")");
                     if (pick && tvBox.Items.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
-                    if (pick && pcBox.Items.Count > 0 && (pcBox.Text.Length == 0 || caster == null)) pcBox.SelectedIndex = 0;
+                    // a PC that was found just now is picked by itself (the one picked before, if still there)
+                    if (pcBox.Items.Count > 0 && !(caster != null && castToPc))
+                    {
+                        int keep = pcBox.Items.IndexOf(prevPc);
+                        pcBox.SelectedIndex = keep >= 0 ? keep : 0;
+                    }
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
@@ -3446,7 +3473,7 @@ namespace TVCast
         {
             if (++usbCheck % 2 == 0) CheckUsbInternet(); // every 2 s
             if (caster == null && homeGuard != null) GuardHome();
-            if (caster == null) { ReceiveTick(); return; }
+            if (caster == null) { ReceiveTick(); AutoFindPcs(); return; }
             if (caster.WrongGpu && !askedGpu && !noAsk)
             {
                 askedGpu = true;
