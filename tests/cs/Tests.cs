@@ -751,10 +751,11 @@ namespace TVCast.Tests
 
         static void TestPcReceiverGetsTheScreensFrameRate()
         {
-            Equal(144, Caster.PcFps(144, 200), "a 144 Hz receiver: 144 even from a 200 Hz PC");
-            Equal(200, Caster.PcFps(240, 200), "never more than the casting screen shows");
+            Equal(144, Caster.PcFps(120, 144), "a 144 Hz shared screen sends 144, even to a 120 Hz receiver");
+            Equal(200, Caster.PcFps(240, 200), "never more than the shared screen shows");
             Equal(240, Caster.PcFps(360, 360), "at most 240");
-            Equal(60, Caster.PcFps(60, 200), "a 60 Hz receiver: 60");
+            Equal(60, Caster.PcFps(144, 60), "a 60 Hz shared screen: 60");
+            Equal(120, Caster.PcFps(120, 0), "shared screen's rate unknown: the receiver's");
             Equal(20000000, Caster.PcBitrate(60, 1920, 1080), "1080p 60: 20 Mb/s");
             Equal(60000000, Caster.PcBitrate(180, 1920, 1080), "1080p 180: three times as much");
             Equal(80000000, Caster.PcBitrate(240, 2560, 1440), "never above 80 Mb/s");

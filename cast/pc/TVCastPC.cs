@@ -1193,11 +1193,12 @@ namespace TVCast
         /// <summary>a PC receiver's refresh rate (INFO), 0 for a TV or phone</summary>
         public volatile int RecvHz;
 
-        /// <summary>frames a second to a PC receiver: as many as both screens show, at most 240
+        /// <summary>frames a second to a PC receiver: as many as the shared screen shows (a 144 Hz
+        /// screen sends 144, even to a 120 Hz receiver, which then shows the newest), 30..240
         /// (unit-tested)</summary>
         internal static int PcFps(int receiverHz, int ownHz)
         {
-            return Math.Max(30, Math.Min(240, Math.Min(receiverHz, ownHz)));
+            return Math.Max(30, Math.Min(240, ownHz > 0 ? ownHz : receiverHz));
         }
 
         /// <summary>bits a second to a PC receiver: 20 Mb/s per 60 frames of 1080p, more pixels a
@@ -1437,7 +1438,7 @@ namespace TVCast
         {
             int w = 1280, h = 720;
             byte[] nv12 = new byte[w * h * 3 / 2];
-            int fps = Fps;
+            int fps = web == null && RecvHz > 0 ? PcFps(RecvHz, DisplayHz.Of(null)) : Fps; // like the screen: a PC receiver gets the main screen's rate
             using (Encoder enc = new Encoder(w, h, fps, Bitrate, web != null ? 66 : 100))
             {
                 EncoderName = enc.Name + " (test pattern)";
@@ -3332,6 +3333,7 @@ namespace TVCast
             string[] args = Environment.GetCommandLineArgs();
             StringBuilder a = new StringBuilder();
             for (int i = 1; i < args.Length; i++) a.Append(" \"").Append(args[i].Replace("\"", "")).Append('"');
+            if (share != null) a.Append(" --share"); // sharing goes on: the second PC asks again by itself
             Process.Start(Application.ExecutablePath, a.ToString());
             Close();
         }
@@ -3739,7 +3741,7 @@ namespace TVCast
             // a virtual screen on the integrated card's encoder: offer the faster NVIDIA one
             if (!askedFastGpu && !noAsk && !string.IsNullOrEmpty(caster.EncoderName))
             {
-                string flag = web != null ? "--ipad" : "--start";
+                string flag = web != null ? "--ipad" : share != null ? "--share" : "--start";
                 BeginInvoke((MethodInvoker)delegate { AskFastGpu(flag); });
             }
             long now = Clock.Ms(), f = Interlocked.Read(ref caster.Frames), b = Interlocked.Read(ref caster.Bytes);
