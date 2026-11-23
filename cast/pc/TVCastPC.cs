@@ -1172,6 +1172,8 @@ namespace TVCast
         public volatile string RouteNote = "-";
         public long Heard; public volatile string RecvError = "-"; // packets from the receiver, last error (log) // the last search of RouteLoop (for the log)
         long lastHeard;      // Clock.Ms() of the last packet from the receiver
+        /// <summary>ms since the receiver last answered (a viewer still there keeps its picture)</summary>
+        public long QuietMs { get { return Clock.Ms() - Interlocked.Read(ref lastHeard); } }
         IPAddress moveTo;    // set by RouteLoop, applied by ControlLoop (which owns the socket)
 
         /// <summary>Keeps a phone on the best link: when it goes quiet for 3 s (it pings twice a
@@ -3509,6 +3511,9 @@ namespace TVCast
                 if (!castToPc) return; // busy with a phone or TV
                 IPAddress now = ParseTv(pulledEntry);
                 if (ip.Equals(now)) return; // already casting to it
+                // another viewer asks while the current one still answers: it waits, so two
+                // viewers do not take the picture from each other every second
+                if (caster.QuietMs < 4000) return;
                 StopCast();
             }
             pulledEntry = name + " (" + ip + ")";
