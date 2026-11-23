@@ -1110,6 +1110,30 @@ namespace TVCast.Tests
             Equal(null, RemoteInput.Decode(new byte[] { 8, 0, 1, 0, 0 }, 5), "short click-at");
         }
 
+        static void TestPcReceiverControlMessages()
+        {
+            InputEvent k = RemoteInput.Decode(new byte[] { 10, 0x5B, 1, 1 }, 4); // left Win, down, extended
+            True(k != null && k.Kind == InputKind.KeyRaw && k.Key == 0x5B && k.Down && k.Extended, "a raw key: Win down");
+            True(RemoteInput.Decode(new byte[] { 10, 0, 1, 0 }, 4) == null, "vk 0 is no key");
+            True(RemoteInput.Decode(new byte[] { 10, 0x41, 2, 0 }, 4) == null, "down must be 0 or 1");
+            True(RemoteInput.Decode(new byte[] { 10, 0x41, 1 }, 3) == null, "too short");
+            InputEvent m = RemoteInput.Decode(new byte[] { 11, 0x80, 0x00, 0xFF, 0xFF }, 5);
+            True(m != null && m.Kind == InputKind.MoveTo && m.X == 0x8000 && m.Y == 0xFFFF, "move to the middle, bottom");
+            InputEvent w = RemoteInput.Decode(new byte[] { 12, 0xFF, 0x88, 0, 0 }, 5); // -120
+            True(w != null && w.Kind == InputKind.WheelHere && w.WheelY == -120, "one notch down where the pointer is");
+        }
+
+        static void TestPcReceiverMapsThePointer()
+        {
+            // a 1920 x 1080 window showing a 1440 x 1080 picture centred (240 px black on each side)
+            int[] a = ViewerForm.ToRemote(240, 0, 240, 0, 1440, 1080);
+            Equal(0, a[0], "left edge of the picture");
+            int[] b = ViewerForm.ToRemote(240 + 1439, 1079, 240, 0, 1440, 1080);
+            True(b[0] == 65535 && b[1] == 65535, "bottom-right corner");
+            int[] c = ViewerForm.ToRemote(10, 500, 240, 0, 1440, 1080);
+            Equal(0, c[0], "on the black bar: clamped to the edge");
+        }
+
         static void TestDecodeInputRefusesOthers()
         {
             Equal(null, RemoteInput.Decode(new byte[] { 5, 0x5B }, 2), "Windows key not allowed");

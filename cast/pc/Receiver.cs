@@ -440,6 +440,22 @@ namespace TVCast
 
         public PcReceiver() { identityPoint = SecureLink.PointOf(identity); }
 
+        // control: the caster allows it (CONFIG flag) and signs its INPUT with this token
+        volatile byte[] token;
+        public volatile bool ControlAllowed;
+
+        /// <summary>a RemoteInput message (mouse, key) to the casting PC; dropped unless it allows control</summary>
+        public void SendInput(byte[] msg)
+        {
+            byte[] t = token;
+            if (!ControlAllowed || t == null || msg.Length > RemoteInput.MaxMessage) return;
+            byte[] p = new byte[1 + Proto.TOKEN_BYTES + msg.Length];
+            p[0] = Proto.INPUT;
+            Buffer.BlockCopy(t, 0, p, 1, Proto.TOKEN_BYTES);
+            Buffer.BlockCopy(msg, 0, p, 1 + Proto.TOKEN_BYTES, msg.Length);
+            SendSealed(p);
+        }
+
         public void Start()
         {
             sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -564,6 +580,14 @@ namespace TVCast
                 lock (frames) frames.Clear();
             }
             if (audio == null && (ch == 1 || ch == 2) && rate >= 8000 && rate <= 48000) audio = new AudioOut(rate, ch);
+            if (n >= Proto.CONFIG_LONG)
+            {
+                byte[] t = new byte[Proto.TOKEN_BYTES];
+                Buffer.BlockCopy(b, 15, t, 0, Proto.TOKEN_BYTES);
+                token = t;
+                ControlAllowed = (b[14] & Proto.CONFIG_CONTROL) != 0;
+            }
+            else ControlAllowed = false;
         }
 
         void OnVideo(byte[] b, int n)
@@ -690,6 +714,8 @@ namespace TVCast
         void GoIdle()
         {
             Streaming = false;
+            ControlAllowed = false;
+            token = null;
             cfgW = cfgH = 0;
             assembler.Reset();
             lock (frames) frames.Clear();
@@ -712,8 +738,12 @@ namespace TVCast
         }
     }
 
-    /// <summary>The picture: borderless and full screen on the main monitor, black around it.
-    /// Esc switches to a normal window and back; closing it stops receiving.</summary>
+    /// <summary>
+    /// The picture: borderless and full screen on the main monitor, black around it; closing it
+    /// stops receiving. When the casting PC allows control, the mouse over the picture and the
+    /// whole keyboard (a low-level hook while this window is in front, so Alt+Tab, Win and other
+    /// shortcuts go there too) control that PC. Ctrl+Alt+Enter: full screen / window (stays here).
+    /// </summary>
     sealed class ViewerForm : Form
     {
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
@@ -721,12 +751,27 @@ namespace TVCast
         [DllImport("gdi32.dll")] static extern int StretchDIBits(IntPtr dc, int x, int y, int w, int h, int sx, int sy, int sw, int sh, int[] bits, byte[] info, uint usage, uint rop);
         [DllImport("gdi32.dll")] static extern int SetStretchBltMode(IntPtr dc, int mode);
 
-        readonly byte[] bmi = new byte[40];
-        bool full = true;
-        IntPtr handle;
+        [StructLayout(LayoutKind.Sequential)] struct KBDLLHOOKSTRUCT { public uint vk, scan, flags, time; public IntPtr extra; }
+        delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
+        [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);
+        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
 
-        public ViewerForm(string title)
+        readonly byte[] bmi = new byte[40];
+        readonly PcReceiver receiver;
+        bool full = true;
+        IntPtr handle, hook;
+        HookProc hookProc; // kept alive while hooked
+        readonly HashSet<byte> held = new HashSet<byte>();
+        volatile int picX, picY, picW = 1, picH = 1; // where the picture is drawn in the window
+        int lastX = -1, lastY = -1;
+        readonly Cursor blank;
+
+        public ViewerForm(string title, PcReceiver receiver)
         {
+            this.receiver = receiver;
             Text = title;
             BackColor = Color.Black;
             StartPosition = FormStartPosition.Manual;
@@ -737,8 +782,84 @@ namespace TVCast
             BitConverter.GetBytes(40).CopyTo(bmi, 0);
             BitConverter.GetBytes((short)1).CopyTo(bmi, 12);
             BitConverter.GetBytes((short)32).CopyTo(bmi, 14);
+            using (Bitmap b = new Bitmap(1, 1)) blank = new Cursor(b.GetHicon()); // the other PC draws its own pointer in the picture
             HandleCreated += delegate { handle = Handle; };
-            KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) ToggleFull(); };
+            Activated += delegate { Hook(); };
+            Deactivate += delegate { Unhook(); };
+            FormClosed += delegate { Unhook(); };
+            // without control: no hook, Esc switches full screen / window as before
+            KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape && !receiver.ControlAllowed) ToggleFull(); };
+            MouseMove += (s, e) => Pointer(e.X, e.Y, false);
+            MouseDown += (s, e) => Press(e, true);
+            MouseUp += (s, e) => Press(e, false);
+            MouseWheel += (s, e) => { if (receiver.ControlAllowed) receiver.SendInput(new byte[] { 12, (byte)(e.Delta >> 8), (byte)e.Delta, 0, 0 }); };
+        }
+
+        /// <summary>window point -> 0..65535 on the picture (clamped to its edges); unit-tested</summary>
+        internal static int[] ToRemote(int x, int y, int px, int py, int pw, int ph)
+        {
+            int rx = pw > 1 ? (int)((long)(x - px) * 65535 / (pw - 1)) : 0;
+            int ry = ph > 1 ? (int)((long)(y - py) * 65535 / (ph - 1)) : 0;
+            return new[] { Math.Max(0, Math.Min(65535, rx)), Math.Max(0, Math.Min(65535, ry)) };
+        }
+
+        void Pointer(int x, int y, bool force)
+        {
+            bool ctl = receiver.ControlAllowed;
+            Cursor = ctl ? blank : Cursors.Default;
+            if (!ctl || (!force && x == lastX && y == lastY)) return;
+            lastX = x; lastY = y;
+            int[] r = ToRemote(x, y, picX, picY, picW, picH);
+            receiver.SendInput(new byte[] { 11, (byte)(r[0] >> 8), (byte)r[0], (byte)(r[1] >> 8), (byte)r[1] });
+        }
+
+        void Press(MouseEventArgs e, bool down)
+        {
+            if (!receiver.ControlAllowed) return;
+            int b = e.Button == MouseButtons.Left ? 0 : e.Button == MouseButtons.Right ? 1 : e.Button == MouseButtons.Middle ? 2 : -1;
+            if (b < 0) return;
+            Pointer(e.X, e.Y, true); // first where, then the press there
+            receiver.SendInput(new byte[] { 7, (byte)b, (byte)(down ? 1 : 0) });
+        }
+
+        void Hook()
+        {
+            if (hook != IntPtr.Zero) return;
+            hookProc = OnKey;
+            hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, hookProc, GetModuleHandle(null), 0);
+        }
+
+        /// <summary>focus left the picture: let go every key pressed there, then stop catching keys</summary>
+        void Unhook()
+        {
+            byte[] keys;
+            lock (held) { keys = new byte[held.Count]; held.CopyTo(keys); held.Clear(); }
+            foreach (byte k in keys) receiver.SendInput(new byte[] { 10, k, 0, 0 });
+            if (hook != IntPtr.Zero) UnhookWindowsHookEx(hook);
+            hook = IntPtr.Zero;
+        }
+
+        IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)
+        {
+            if (code >= 0 && receiver.ControlAllowed && GetForegroundWindow() == handle)
+            {
+                KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                if ((k.flags & 0x10) == 0) // LLKHF_INJECTED: not ours to forward
+                {
+                    bool down = (k.flags & 0x80) == 0; // LLKHF_UP
+                    byte vk = (byte)k.vk;
+                    bool ctrl = (Control.ModifierKeys & Keys.Control) != 0, alt = (Control.ModifierKeys & Keys.Alt) != 0;
+                    if (vk == 0x0D && ctrl && alt) // Ctrl+Alt+Enter stays here: full screen / window
+                    {
+                        if (down) BeginInvoke((MethodInvoker)ToggleFull);
+                        return (IntPtr)1;
+                    }
+                    lock (held) { if (down) held.Add(vk); else held.Remove(vk); }
+                    receiver.SendInput(new byte[] { 10, vk, (byte)(down ? 1 : 0), (byte)((k.flags & 1) != 0 ? 1 : 0) });
+                    return (IntPtr)1; // swallowed here: Alt+Tab, Win etc. act on the other PC only
+                }
+            }
+            return CallNextHookEx(hook, code, wParam, lParam);
         }
 
         void ToggleFull()
@@ -767,6 +888,7 @@ namespace TVCast
             double k = Math.Min(cs.Width / (double)w, cs.Height / (double)h);
             int dw = (int)Math.Round(w * k), dh = (int)Math.Round(h * k);
             int dx = (cs.Width - dw) / 2, dy = (cs.Height - dh) / 2;
+            picX = dx; picY = dy; picW = dw; picH = dh;
             BitConverter.GetBytes(w).CopyTo(bmi, 4);
             BitConverter.GetBytes(-h).CopyTo(bmi, 8); // top-down rows
             IntPtr dc = GetDC(hw);

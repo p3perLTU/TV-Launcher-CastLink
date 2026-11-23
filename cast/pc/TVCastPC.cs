@@ -1287,6 +1287,7 @@ namespace TVCast
             if (video != null) video.Join(1000);
             if (audio != null) audio.Join(1000);
             if (control != null) control.Join(1000);
+            RemoteInput.ReleaseButtons(); // a PC receiver's held Ctrl / Alt / mouse button must not stay down
             if (sock != null)
             {
                 for (int i = 0; i < 3; i++) SendSealed(new byte[] { Proto.BYE }, 1);
@@ -1325,6 +1326,7 @@ namespace TVCast
         /// <summary>a new handshake: new ephemeral key and nonce (also after the receiver restarted)</summary>
         void NewHello()
         {
+            RemoteInput.ReleaseButtons(); // the receiver went quiet: nothing it pressed stays down
             SecureLink.Session old = link;
             link = null;
             linkReady = false;
@@ -1627,7 +1629,9 @@ namespace TVCast
                     // touches from a phone that shows this screen
                     byte[] m = AllowControl && linkReady ? InputMessage(inb, n, token) : null;
                     InputEvent e = m == null ? null : RemoteInput.Decode(m, m.Length);
-                    if (e != null) RemoteInput.Apply(e);
+                    // raw keys (shortcuts) only from a PC receiver: it reported its refresh rate
+                    // in INFO, a TV or phone never does
+                    if (e != null && (e.Kind != InputKind.KeyRaw || RecvHz > 0)) RemoteInput.Apply(e);
                 }
                 else if (n >= 9 && inb[0] == Proto.INFO)
                 {
@@ -2081,8 +2085,8 @@ namespace TVCast
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
             ReceiveAddress = lt ? "Šio kompiuterio vardas: {0}" : "This PC's name: {0}";
-            ReceiveKeys = lt ? "Esc – visas ekranas / langas. Uždarius vaizdo langą rodymas nutraukiamas."
-                             : "Esc: full screen / window. Closing the picture window ends the cast.";
+            ReceiveKeys = lt ? "Jei kitas kompiuteris leidžia valdyti, pelė ir visa klaviatūra (ir Alt+Tab, Win) valdo jį. Ctrl+Alt+Enter – visas ekranas / langas."
+                             : "If the other PC allows control, the mouse and the whole keyboard (Alt+Tab and Win too) control it. Ctrl+Alt+Enter: full screen / window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
@@ -3112,7 +3116,7 @@ namespace TVCast
             recvCode.Text = code ?? "";
             if (r.Streaming && viewer == null)
             {
-                viewer = new ViewerForm("CastLink · " + r.CasterName);
+                viewer = new ViewerForm("CastLink · " + r.CasterName, r);
                 ViewerForm v = viewer;
                 v.FormClosed += delegate
                 {
