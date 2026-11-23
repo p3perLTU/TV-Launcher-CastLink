@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, OtherPc, PcControl;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2089,24 +2089,25 @@ namespace TVCast
             NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
             ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
-            ReceiveHint = lt ? "Kompiuteris, kurio ekraną nori matyti, siunčia. Kompiuteris, prie kurio sėdi, gauna."
-                             : "The PC whose screen you want to see sends. The PC you sit at receives.";
+            ReceiveHint = lt ? "Pirmame spausk „Laukti ryšio“, antrame pasirink pirmąjį ir spausk „Rodyti šį ekraną“."
+                             : "On the first press “Wait for a connection”, on the second pick the first and press “Show this screen”.";
             PcPageTitle = lt ? "Iš kompiuterio į kompiuterį" : "From PC to PC";
             ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
             ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
-            ReceiveWaiting = lt ? "Laukiama ryšio\nKitame kompiuteryje CastLink spausk „Ieškoti“, pasirink „{0}“ ir „Rodyti“."
-                                : "Waiting for a connection\nIn CastLink on the other PC press “Find”, pick “{0}” and “Show”.";
+            ReceiveWaiting = lt ? "Laukiama ryšio\nAntrame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti šį ekraną“."
+                                : "Waiting for a connection\nIn CastLink on the second PC pick “{0}” and press “Show this screen”.";
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
-            ReceiveAddress = lt ? "Kitame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the other PC pick “{0}”.";
+            ReceiveAddress = lt ? "Antrame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the second PC pick “{0}”.";
             ReceiveKeys = lt ? "Pelė ir klaviatūra valdo kitą kompiuterį (jei jame leista). Ctrl+Alt+Enter – langas."
                              : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
-            SendHeader = lt ? "Siųsti ekraną" : "Send screen";
-            GetHeader = lt ? "Gauti ekraną" : "Receive screen";
+            SendHeader = lt ? "Antras kompiuteris" : "Second PC";
+            GetHeader = lt ? "Pirmas kompiuteris" : "First PC";
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
-            OtherPc = lt ? "kitas kompiuteris" : "another PC";
+            SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
+            GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
@@ -2360,6 +2361,7 @@ namespace TVCast
     {
         public string Glyph;
         public Color From, To;
+        public Font GlyphFont; // null = the icon font
 
         public GlyphTile()
         {
@@ -2375,7 +2377,7 @@ namespace TVCast
             using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
                 new PointF(0, 0), new PointF(Width, Height), From, To))
                 g.FillPath(b, p);
-            TextRenderer.DrawText(g, Glyph, Icons.Font(13f), ClientRectangle, Color.White,
+            TextRenderer.DrawText(g, Glyph, GlyphFont ?? Icons.Font(13f), ClientRectangle, Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
@@ -2663,13 +2665,13 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
-            // this PC and other PCs: two cards side by side, left sends this screen to another PC,
-            // right waits for another PC to show its screen here; each card names both ends
+            // PC to PC: two cards side by side, left = the first PC (you sit at it, it receives),
+            // right = the second PC (its screen is shown on the first)
             const int CW = (PW - 32 - 12) / 2, CY = 76, CH = PH - CY - 16, CI = CW - 28;
             Font headerFont = new Font("Segoe UI Semibold", 12.5f), dirFont = new Font("Segoe UI", 9f);
-            sendCard.Location = Ui.P(16, CY);
+            sendCard.Location = Ui.P(16 + CW + 12, CY);
             sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
-            getCard.Location = Ui.P(16 + CW + 12, CY);
+            getCard.Location = Ui.P(16, CY);
             getCard.Size = sendCard.Size;
             sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
@@ -2701,9 +2703,11 @@ namespace TVCast
             pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
             pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             pcGoBtn.Click += delegate { Toggle(true); };
-            GlyphTile sendTile = new GlyphTile { Glyph = Icons.Upload, From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
+            GlyphTile sendTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
+            sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
             sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
-            GlyphTile getTile = new GlyphTile { Glyph = Icons.Download, From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
+            GlyphTile getTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
+            getTile.GlyphFont = sendTile.GlyphFont;
             getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
             sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
@@ -3198,13 +3202,8 @@ namespace TVCast
         /// <summary>each card names both ends: "this PC -> picked PC" and "other PC -> this PC"</summary>
         void ShowDirections()
         {
-            string me = Environment.MachineName;
-            string other = Caster.NameOf(pcBox.Text);
-            if (other == null) other = pcBox.Text.Trim();
-            sendDir.Text = me + "  →  " + (other.Length == 0 ? Texts.OtherPc : other);
-            PcReceiver r = receiver;
-            string from = r != null && r.Streaming && !string.IsNullOrEmpty(r.CasterName) ? r.CasterName : Texts.OtherPc;
-            getDir.Text = from + "  →  " + me;
+            sendDir.Text = Texts.SendSub;
+            getDir.Text = Texts.GetSub;
         }
 
         void ToggleReceive()
