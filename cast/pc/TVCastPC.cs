@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, ShowPcNone;
+            SendHeader, GetHeader, ShowPc, OtherPc, PcControl;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2091,21 +2091,22 @@ namespace TVCast
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
             ReceiveHint = lt ? "Kitas kompiuteris su CastLink gali rodyti savo ekraną čia, per visą šio kompiuterio ekraną."
                              : "Another PC with CastLink can show its screen here, full screen on this PC.";
-            ReceiveStart = lt ? "Rodyti kito kompiuterio ekraną čia ({0})" : "Show another PC's screen here ({0})";
+            ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
             ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
             ReceiveWaiting = lt ? "Laukiama ryšio\nKitame kompiuteryje CastLink spausk „Ieškoti“, pasirink „{0}“ ir „Rodyti“."
                                 : "Waiting for a connection\nIn CastLink on the other PC press “Find”, pick “{0}” and “Show”.";
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
-            ReceiveAddress = lt ? "Kitame kompiuteryje pasirink „{0}“" : "On the other PC pick “{0}”";
-            ReceiveKeys = lt ? "Pelė ir visa klaviatūra valdo kitą kompiuterį (jei leista) · Ctrl+Alt+Enter – langas"
-                             : "Mouse and whole keyboard control the other PC (if allowed) · Ctrl+Alt+Enter: window";
+            ReceiveAddress = lt ? "Kitame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the other PC pick “{0}”.";
+            ReceiveKeys = lt ? "Pelė ir klaviatūra valdo kitą kompiuterį (jei jame leista). Ctrl+Alt+Enter – langas."
+                             : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
             SendHeader = lt ? "SIŲSTI EKRANĄ" : "SEND SCREEN";
             GetHeader = lt ? "GAUTI EKRANĄ" : "RECEIVE SCREEN";
-            ShowPc = lt ? "Rodyti {0} ekraną kompiuteryje {1}" : "Show {0}'s screen on {1}";
-            ShowPcNone = lt ? "Pirma pasirink kompiuterį, kuriame rodyti" : "First pick the PC to show it on";
+            ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
+            OtherPc = lt ? "kitas kompiuteris" : "another PC";
+            PcControl = lt ? "Leisti valdyti" : "Allow control";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2439,7 +2440,8 @@ namespace TVCast
         readonly ComboBox pcBox = new ComboBox();
         readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
         readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck();
-        readonly Label sendHeader = new Label(), getHeader = new Label(), pcDivider = new Label();
+        readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
+        readonly Card sendCard = new Card(), getCard = new Card();
         bool castToPc;
         PcReceiver receiver;
         ViewerForm viewer;
@@ -2635,61 +2637,69 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
-            // this PC and other PCs: top half sends this screen to another PC, bottom half waits
-            // for another PC to show its screen here
-            Font headerFont = new Font("Segoe UI Semibold", 8.5f);
+            // this PC and other PCs: two cards side by side, left sends this screen to another PC,
+            // right waits for another PC to show its screen here; each card names both ends
+            const int CW = (PW - 32 - 12) / 2, CH = PH - 50 - 16, CI = CW - 28;
+            Font headerFont = new Font("Segoe UI Semibold", 8.5f), dirFont = new Font("Segoe UI Semibold", 11f);
+            sendCard.Location = Ui.P(16, 50);
+            sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
+            getCard.Location = Ui.P(16 + CW + 12, 50);
+            getCard.Size = sendCard.Size;
             sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
-            sendHeader.Location = Ui.P(16, 50);
+            sendHeader.Location = Ui.P(14, 14);
             sendHeader.AutoSize = true;
-            pcBox.Location = Ui.P(16, 72);
-            pcBox.Width = Ui.S(PW - 32 - 124);
-            pcFindBtn.Text = Texts.Find;
+            sendDir.Font = dirFont;
+            sendDir.AutoEllipsis = true;
+            sendDir.SetBounds(Ui.S(14), Ui.S(34), Ui.S(CI), Ui.S(24));
+            pcBox.Location = Ui.P(14, 68);
+            pcBox.Width = Ui.S(CI - 40);
+            pcFindBtn.Text = "";
             pcFindBtn.Glyph = Icons.Search;
-            pcFindBtn.Location = Ui.P(PW - 16 - 116, 70);
-            pcFindBtn.Size = new Size(Ui.S(116), Ui.S(32));
+            pcFindBtn.Location = Ui.P(14 + CI - 34, 66);
+            pcFindBtn.Size = new Size(Ui.S(34), Ui.S(32));
             pcFindBtn.Click += delegate { Search(); };
+            new ToolTip().SetToolTip(pcFindBtn, Texts.Find);
             pcSoundBox.Text = Texts.Sound;
             pcSoundBox.Glyph = Icons.Volume;
-            pcSoundBox.Location = Ui.P(16, 110);
-            pcControlBox.Text = Texts.AllowControl;
+            pcSoundBox.Location = Ui.P(14, 108);
+            pcControlBox.Text = Texts.PcControl;
             pcControlBox.Glyph = Icons.Touch;
-            pcControlBox.Location = Ui.P(16, 138);
+            pcControlBox.Location = Ui.P(14, 136);
             pcSoundBox.Checked = pcControlBox.Checked = true;
             pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
-            pcBox.TextChanged += delegate { if (!(caster != null && castToPc)) pcGoBtn.Text = ShowPcText(); };
-            pcGoBtn.Text = ShowPcText();
+            pcBox.TextChanged += delegate { ShowDirections(); };
+            pcGoBtn.Text = Texts.ShowPc;
             pcGoBtn.Glyph = Icons.Play;
             pcGoBtn.Font = goBtn.Font;
-            pcGoBtn.Location = Ui.P(16, 170);
-            pcGoBtn.Size = new Size(Ui.S(PW - 32), Ui.S(38));
+            pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
+            pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             pcGoBtn.Click += delegate { Toggle(true); };
-            pcDivider.AutoSize = false;
-            pcDivider.SetBounds(Ui.S(16), Ui.S(222), Ui.S(PW - 32), 1);
+            sendCard.Controls.AddRange(new Control[] { sendHeader, sendDir, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
-            getHeader.Location = Ui.P(16, 234);
+            getHeader.Location = Ui.P(14, 14);
             getHeader.AutoSize = true;
+            getDir.Font = dirFont;
+            getDir.AutoEllipsis = true;
+            getDir.SetBounds(Ui.S(14), Ui.S(34), Ui.S(CI), Ui.S(24));
             recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
-            recvName.Location = Ui.P(16, 256);
-            recvName.AutoSize = true;
-            recvName.Font = new Font("Segoe UI Semibold", 11f);
-            recvCode.Location = Ui.P(PW - 16 - 180, 248);
-            recvCode.Size = new Size(Ui.S(180), Ui.S(40));
-            recvCode.TextAlign = ContentAlignment.MiddleRight;
+            recvName.SetBounds(Ui.S(14), Ui.S(68), Ui.S(CI), Ui.S(40));
+            recvCode.SetBounds(Ui.S(14), Ui.S(104), Ui.S(CI), Ui.S(40));
+            recvCode.TextAlign = ContentAlignment.MiddleLeft;
             recvCode.Font = new Font("Segoe UI Semibold", 20f);
             recvKeys.Text = Texts.ReceiveKeys;
             recvKeys.Font = new Font("Segoe UI", 8.5f);
-            recvKeys.Location = Ui.P(16, 282);
-            recvKeys.AutoSize = true; // one line; a fixed height clipped the letters' tails
-            recvBtn.Text = string.Format(Texts.ReceiveStart, Environment.MachineName);
+            recvKeys.SetBounds(Ui.S(14), Ui.S(146), Ui.S(CI), Ui.S(48));
+            recvBtn.Text = Texts.ReceiveStart;
             recvBtn.Glyph = Icons.Play;
             recvBtn.Font = goBtn.Font;
-            recvBtn.Location = Ui.P(16, PH - 16 - 38);
-            recvBtn.Size = new Size(Ui.S(PW - 32), Ui.S(38));
+            recvBtn.Location = Ui.P(14, CH - 14 - 38);
+            recvBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             recvBtn.Click += delegate { ToggleReceive(); };
-            recvPage.Controls.AddRange(new Control[] { sendHeader, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn,
-                pcDivider, getHeader, recvName, recvCode, recvKeys, recvBtn });
+            getCard.Controls.AddRange(new Control[] { getHeader, getDir, recvName, recvCode, recvKeys, recvBtn });
+            recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
+            ShowDirections();
 
 
             // status card: a dot with the state line, grey details below
@@ -2785,9 +2795,9 @@ namespace TVCast
             foreach (Control c in new Control[] { subtitle, tvLabel, fpsBox, urlCaption, codeCaption, printLabel, detailLabel,
                 appHint, webHint, screensHint, screenLabel, extendSteps }) c.ForeColor = Ui.Muted;
             foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle,
-                pcSoundBox, pcControlBox, recvName, recvCode }) c.ForeColor = Ui.Ink;
+                pcSoundBox, pcControlBox, recvName, recvCode, sendDir, getDir }) c.ForeColor = Ui.Ink;
             foreach (Control c in new Control[] { sendHeader, getHeader, recvKeys }) c.ForeColor = Ui.Muted;
-            pcDivider.BackColor = Ui.Subtle;
+            sendCard.BackColor = getCard.BackColor = Ui.Field;
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
             tvBox.BackColor = screenBox.BackColor = pcBox.BackColor = Ui.Field;
@@ -3155,12 +3165,16 @@ namespace TVCast
         }
 
         /// <summary>this PC as a receiver on / off (Receiver.cs)</summary>
-        /// <summary>the send button names both PCs, so it is clear which screen goes where</summary>
-        string ShowPcText()
+        /// <summary>each card names both ends: "this PC -> picked PC" and "other PC -> this PC"</summary>
+        void ShowDirections()
         {
+            string me = Environment.MachineName;
             string other = Caster.NameOf(pcBox.Text);
             if (other == null) other = pcBox.Text.Trim();
-            return other.Length == 0 ? Texts.ShowPcNone : string.Format(Texts.ShowPc, Environment.MachineName, other);
+            sendDir.Text = me + "  →  " + (other.Length == 0 ? Texts.OtherPc : other);
+            PcReceiver r = receiver;
+            string from = r != null && r.Streaming && !string.IsNullOrEmpty(r.CasterName) ? r.CasterName : Texts.OtherPc;
+            getDir.Text = from + "  →  " + me;
         }
 
         void ToggleReceive()
@@ -3180,7 +3194,8 @@ namespace TVCast
             if (receiver != null) receiver.Dispose();
             receiver = null;
             recvCode.Text = "";
-            recvBtn.Text = string.Format(Texts.ReceiveStart, Environment.MachineName);
+            recvBtn.Text = Texts.ReceiveStart;
+            ShowDirections();
             StyleButtons();
         }
 
@@ -3199,6 +3214,7 @@ namespace TVCast
             if (r == null) return;
             string code = r.PairCode;
             recvCode.Text = code ?? "";
+            ShowDirections();
             if (r.Streaming && viewer == null)
             {
                 viewer = new ViewerForm("CastLink · " + r.CasterName, r);
@@ -3247,7 +3263,7 @@ namespace TVCast
             web = null;
             goBtn.Text = Texts.Show;
             ipadBtn.Text = Texts.ShowIpad;
-            pcGoBtn.Text = ShowPcText();
+            pcGoBtn.Text = Texts.ShowPc;
             castToPc = false;
             StyleButtons();
             ipadMode = "";
