@@ -71,6 +71,14 @@ The PC on an iPad or a Mac, in Safari.
 - 🖼️ Illustrated one-time setup on the page, for iPad and for Mac
 - 📦 Nothing to install on the iPad or Mac
 
+### 💻 CastLink → another PC
+One Windows PC shares its screen, another picks it from a list and controls it.
+
+- ⚡ As many frames as the shared screen shows (144 Hz → up to 144)
+- ⌨️ The whole keyboard, shortcuts and the Windows key too
+- 🖱️ Own pointer: both people keep their own mouse
+- 🛡️ Administrator windows too, after one click on the shield button
+
 </td>
 </tr>
 </table>
@@ -108,7 +116,7 @@ The PC on an iPad or a Mac, in Safari.
 | 🏠 | **TV Launcher** | Android TV / Google TV 8+ | `TVLauncher-<version>.apk` |
 | 📺 | **CastLink** for the TV (receiver) | Android TV / Google TV 11+ | `CastLink-TV-<version>.apk` |
 | 📱 | **CastLink** for the phone (sender, and receiver for the PC) | Android phone 10+ | `CastLink-Phone-<version>.apk` |
-| 💻 | **CastLink** for the PC (sender, also to the iPad and Mac) | Windows 10/11, 64-bit, portable | `CastLink-PC-<version>.zip` |
+| 💻 | **CastLink** for the PC (sender, also to the iPad and Mac; shows another PC's screen) | Windows 10/11, 64-bit, portable | `CastLink-PC-<version>.zip` |
 | 🍎 | **CastLink** for the Mac (sender to the TV, a phone or an iPad) | macOS 13+, Intel (Apple Silicon through Rosetta 2) | `CastLink-Mac-<version>.dmg` |
 | 📲 | iPad / Mac viewer | Safari on iPadOS 13+ or macOS (16.4+ keeps the screen on) | — served by the PC or Mac app |
 

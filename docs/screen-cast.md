@@ -7,7 +7,7 @@ possible, on the home network only:
 |---|---|---|
 | Receiver "CastLink" (`lt.tvcast.receiver`) | Android TV 11+ | `cast/receiver` |
 | Sender "CastLink" (`lt.tvcast.sender`) | Android phone 10+ | `cast/sender` |
-| PC sender `CastLink.exe` | Windows 10/11 x64 | `cast/pc/TVCastPC.cs` |
+| PC app `CastLink.exe` (sends, and receives from another PC) | Windows 10/11 x64 | `cast/pc` (`TVCastPC.cs`, `Receiver.cs`, `Share.cs`) |
 
 > [!NOTE]
 > Up to v1.4 they were called *Phone Screen* (TV), *Cast to TV* (phone) and *Cast to TV – PC*
@@ -33,6 +33,42 @@ TV remote in the receiver: **OK** shows statistics, **◀ ▶** cycles the pictu
 
 Both devices must be on the same network, preferably the **5 GHz** Wi-Fi: on a busy 2.4 GHz
 network the picture stalls every few seconds.
+
+## PC → PC
+
+One Windows PC can show its screen on another and be controlled from it, both running
+`CastLink.exe`, on the **This PC** page:
+
+1. **First PC** (its screen is shown): press **Share screen**. *Allow sound* and *Allow
+   control* decide what the second PC gets.
+2. **Second PC** (you sit at it): the first PC appears by itself as a tile (the page looks every
+   few seconds); pick it and press **Show**. The picture opens full screen.
+3. The first time, the first PC asks whether the 6-digit code matches, as with every new device.
+
+On the second PC, while the picture is in front, its **whole keyboard** goes to the first PC:
+Esc, Win, Alt+Tab, Ctrl+C/V and the other shortcuts too. **Ctrl+Alt+Enter** stays local and
+switches between full screen and a window. Windows itself keeps Ctrl+Alt+Del and Win+L on the
+PC you sit at.
+
+- **Own pointer** (on by default): the second PC's mouse stays its own arrow; a click or the
+  wheel borrows the first PC's pointer and puts it back, so a person at the first PC keeps
+  using their mouse. Off: the second PC moves the first PC's pointer.
+- **Administrator windows** (Task Manager, anything run as administrator) take no input from a
+  normal app. The **shield button** next to *Share screen* restarts CastLink as administrator
+  (Windows asks first) and keeps sharing; the second PC reconnects by itself. The Windows
+  "allow changes?" prompt runs on a secure desktop no app can see or control.
+- **Frame rate.** The first PC sends as many frames a second as its screen shows (a 144 Hz
+  screen: 144, at most 240); the second PC decodes every frame and draws the newest.
+- **A second screen.** With a virtual display on the first PC (see [the iPad page](ipad.md#as-a-second-screen)),
+  pick it on the **Screens** page: the second PC then works as the first PC's extra screen.
+- **Firewall.** Both PCs need CastLink allowed in the Windows firewall (UDP 47800 and 47802).
+  Windows asks when CastLink first waits for a connection; if that was cancelled, a block rule
+  stays and the other PC is never found.
+
+Inside, the PC that shares only waits on UDP 47802; the second PC asks it to cast (PULL) and
+then receives exactly like a TV, so the same encryption, pairing and loss handling apply. The
+receiver decodes with the Windows H.264 decoder, converts to RGB on the CPU and draws with GDI;
+sound plays through waveOut with at most ~60 ms queued.
 
 ## Design
 
@@ -90,6 +126,24 @@ Inside SEALED:
 | KEYREQ (10) | TV -> sender | please send a keyframe |
 | BYE (11) | sender -> TV | cast stopped |
 | PING (12) / PONG (13) | TV -> sender / back | TV clock / TV clock + sender clock |
+| INPUT (14) | receiver -> PC | token, one input message ([`RemoteInput.cs`](../cast/pc/RemoteInput.cs)) |
+| INFO (17) | receiver -> PC, every 2 s | screen width, height; a PC receiver adds its refresh rate |
+
+Discovery, in the clear on port 47800 (besides mDNS):
+
+| Packet | Direction | Contents |
+|---|---|---|
+| WHO (15) | PC -> broadcast / USB gateway | who are you? |
+| NAME (16) | TV -> PC | name |
+| PCNAME (18) / PHONENAME (19) | PC receiver / phone -> PC | name (listed apart, with the right icon) |
+
+PC → PC sharing, in the clear on port 47802 ([`Share.cs`](../cast/pc/Share.cs)):
+
+| Packet | Direction | Contents |
+|---|---|---|
+| SHARE_WHO (30) | second PC -> broadcast | who shares? |
+| SHARE_NAME (31) | sharing PC -> second PC | name (only while sharing is on) |
+| PULL (32) | second PC -> sharing PC | please cast to me (repeated every 1.5 s until the picture comes) |
 
 ## Measured (Sony KD-50X80J, Samsung S23 FE, Ryzen 7 laptop with RTX 4060)
 
@@ -104,6 +158,14 @@ Inside SEALED:
 | bitrate | 16 Mb/s | 20 Mb/s |
 
 Most of what is left is the TV itself (decoder plus ~26 ms from decoded to the panel).
+
+**PC → PC** from a 144 Hz laptop screen whose integrated AMD GPU does the encoding: ~110-120
+frames a second. The AMD H.264 encoder alone tops out at ~120 a second at 1080p; NVIDIA's does
+~150. Three things moved the sender from ~93 to there: the screen is read into memory only for
+the frames that are sent (not for each of the screen's 144 pictures), the next frame is
+converted straight into the encoder's buffer while it still works on the last one, and the
+encoder's output is taken on a thread of its own (the AMD encoder's ProcessOutput waits ~4.5 ms
+a frame for the GPU).
 
 ### 120 fps
 
@@ -140,6 +202,16 @@ and frames get lost. Use 60 there.
   limited to 4 a second.
 - A fake `_tvcast` mDNS entry from another device on the network could appear in the
   sender's TV list.
+- **PC → PC sharing.** The sharing PC answers SHARE_WHO and accepts PULL only while its user
+  has *Share screen* on, only from private IPv4 addresses and at most twice a second. A PULL
+  only starts the usual encrypted cast to the asking PC: a PC not confirmed before still needs
+  the pairing code confirmed on the sharing PC. While one viewer is connected, another one's
+  PULL waits until the first stops answering.
+- **Whole keyboard only from a PC.** Raw keys (shortcuts, the Windows key) are accepted only
+  from a PC receiver; phones, TVs and browsers keep the fixed list of allowed keys.
+- **Administrator.** CastLink runs as a normal user; the shield button restarts it as
+  administrator only when asked. While it runs as administrator, a connected PC with control
+  allowed can control administrator windows too.
 
 ## PC → iPad (in Safari)
 

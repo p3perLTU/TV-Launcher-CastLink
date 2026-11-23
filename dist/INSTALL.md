@@ -95,6 +95,23 @@ TV remote: **OK** shows statistics, **◀ ▶** changes the picture size, **Back
 - Laptop with two graphics cards: if the app says Windows runs it on the wrong card, answer
   **Yes**. It sets itself to "Power saving" (Settings → Display → Graphics) and restarts.
 
+## 6a. One PC's screen on another PC (with control)
+
+- Both PCs run `CastLink.exe` (the same version) and are on the same home network.
+- **First PC** (whose screen you want to see): open **This PC** and press **Share screen**.
+  *Allow sound* and *Allow control* decide what the other PC gets.
+- **Second PC** (the one you sit at): open **This PC**; the first PC appears by itself as a tile.
+  Pick it and press **Show**. The first time, confirm the code on the first PC.
+- On the second PC the whole keyboard (shortcuts and the Windows key too) and the mouse control
+  the first PC. **Ctrl+Alt+Enter** switches the picture between full screen and a window.
+- **Own pointer** (on by default) keeps the second PC's mouse separate: clicks borrow the first
+  PC's pointer and put it back, so a person there can keep using their mouse.
+- To control **administrator windows** too (Task Manager and the like), press the **shield
+  button** on the first PC: CastLink restarts as administrator (Windows asks) and keeps sharing.
+- If the other PC is never found, Windows Firewall blocks CastLink on one of them: in *Windows
+  Security → Firewall & network protection → Allow an app through firewall*, tick both boxes
+  for CastLink (and remove any blocked CastLink entries).
+
 ## 7. PC screen on an iPad (with touch control)
 
 Nothing to install on the iPad.
