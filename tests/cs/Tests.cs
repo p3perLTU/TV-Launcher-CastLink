@@ -767,6 +767,16 @@ namespace TVCast.Tests
             True(Discovery.Broadcast(IPAddress.Parse("10.0.0.5"), IPAddress.Parse("255.255.255.255")) == null, "a /32 has no broadcast");
         }
 
+        static void TestSharingPcsTalkInShortPackets()
+        {
+            byte[] p = ShareHost.Packet(ShareHost.NAME, "Ąžuolas-PC");
+            Equal(31, (int)p[0], "name type");
+            Equal("Ąžuolas-PC", ShareHost.Text(p, p.Length), "the name survives UTF-8");
+            True(ShareHost.Text(new byte[] { ShareHost.PULL }, 1) == null, "an empty ask has no name");
+            Equal(256, ShareHost.Packet(ShareHost.PULL, new string('x', 400)).Length, "names are cut to 255 bytes");
+            True(ShareHost.WHO != SecureLink.HELLO && ShareHost.PULL != Proto.PCNAME, "own types, on their own port");
+        }
+
         static void TestGpuPreferenceFollowsTheScreensCard()
         {
             Equal(2, MainForm.WantedGpuPreference(true), "a monitor on the NVIDIA card (HDMI): High performance");

@@ -1894,7 +1894,7 @@ namespace TVCast
         }
 
         /// <summary>the broadcast address of every home network this PC is on (private IPv4)</summary>
-        static List<IPAddress> LanBroadcasts()
+        internal static List<IPAddress> LanBroadcasts()
         {
             List<IPAddress> list = new List<IPAddress>();
             try
@@ -2004,7 +2004,8 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress, OwnPointer, OwnPointerTip;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress, OwnPointer, OwnPointerTip,
+            ShareStart, ShareStop, ShareWaiting, ShareOff, SharePortBusy, PickSharer;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2095,16 +2096,16 @@ namespace TVCast
             NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
             ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
-            ReceiveHint = lt ? "Antrame spausk „Laukti ryšio“, pirmame – „Rodyti šį ekraną“."
-                             : "On the second press “Wait for a connection”, on the first “Show this screen”.";
+            ReceiveHint = lt ? "Pirmame spausk „Bendrinti ekraną“, antrame pasirink pirmąjį ir spausk „Rodyti“."
+                             : "On the first press “Share screen”, on the second pick the first and press “Show”.";
             PcPageTitle = lt ? "Iš kompiuterio į kompiuterį" : "From PC to PC";
-            ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
-            ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
-            ReceiveWaiting = lt ? "Laukiama ryšio\nPirmame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti šį ekraną“."
-                                : "Waiting for a connection\nIn CastLink on the first PC pick “{0}” and press “Show this screen”.";
+            ReceiveStart = lt ? "Rodyti" : "Show";
+            ReceiveStop = lt ? "Sustabdyti" : "Stop";
+            ReceiveWaiting = lt ? "Jungiamasi prie {0}\nJei {0} klausia kodo, patvirtink jį ten."
+                                : "Connecting to {0}\nIf {0} asks about a code, confirm it there.";
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
-            ReceiveAddress = lt ? "Pirmame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the first PC pick “{0}”.";
+            ReceiveAddress = lt ? "Antrame kompiuteryje pasirink „{0}“ ir spausk „Rodyti“." : "On the second PC pick “{0}” and press “Show”.";
             ReceiveKeys = lt ? "Pelė ir klaviatūra valdo kitą kompiuterį (jei jame leista). Ctrl+Alt+Enter – langas."
                              : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
@@ -2117,7 +2118,14 @@ namespace TVCast
             OwnPointer = lt ? "Sava pelė" : "Own pointer";
             OwnPointerTip = lt ? "Šio kompiuterio pelė nejudina kito kompiuterio žymeklio: jis pasiskolinamas tik spustelėjimui ir grįžta atgal. Taip abu gali naudoti pelę vienu metu."
                               : "This PC's mouse does not move the other PC's pointer: it is borrowed only for a click and put back, so both can use a mouse at once.";
-            PcSearching = lt ? "Ieškoma… Antrame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the second PC press “Wait for a connection”.";
+            PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Bendrinti ekraną“." : "Looking… On the first PC press “Share screen”.";
+            ShareStart = lt ? "Bendrinti ekraną" : "Share screen";
+            ShareStop = lt ? "Nebebendrinti" : "Stop sharing";
+            ShareWaiting = lt ? "Ekranas bendrinamas · laukiama antro kompiuterio\nAntrame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti“."
+                              : "Screen shared · waiting for the second PC\nIn CastLink on the second PC pick “{0}” and press “Show”.";
+            ShareOff = lt ? "Ekranas nebebendrinamas" : "Screen no longer shared";
+            SharePortBusy = lt ? "Prievadas {0} užimtas: gal CastLink jau atidarytas kitame lange?" : "Port {0} is busy: is CastLink already open in another window?";
+            PickSharer = lt ? "Pirma pasirink kompiuterį, kurio ekraną nori matyti" : "First pick the PC whose screen you want to see";
             SendSub = lt ? "Bendrina savo ekraną" : "Shares its screen";
             GetSub = lt ? "Rodo pirmojo ekraną" : "Shows the first one's screen";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
@@ -2536,6 +2544,11 @@ namespace TVCast
         bool castToPc;
         PcReceiver receiver;
         ViewerForm viewer;
+        ShareHost share;          // this PC shares its screen: a viewer may ask it to cast
+        string pulledEntry;       // "name (address)" of the viewer that asked
+        IPAddress pullFrom;       // the sharing PC this one asked for the picture
+        string pullName = "";
+        long lastPullAt;
         int lastShown;
         long lastRecvTick;
         Card[] pages;
@@ -2578,7 +2591,8 @@ namespace TVCast
         // command line, for testing: --tv <ip> --start --log <file> --find --fps N --size WxH --lang en|lt
         //   --ipad (start the iPad mode) --control on|off --port N --no-ask
         readonly string logFile;
-        readonly bool autoStart, findOnly, autoIpad, autoReceive;
+        readonly bool autoStart, findOnly, autoIpad, autoReceive, autoShare;
+        readonly string autoPull; // tests: --pull "Name (ip)" asks that sharing PC for its picture
         readonly string argControl;
         bool argFps;
         int startPage;
@@ -2601,6 +2615,8 @@ namespace TVCast
                 else if (args[i] == "--lang" && i + 1 < args.Length) Texts.Use(args[++i]);
                 else if (args[i] == "--find") findOnly = true;
                 else if (args[i] == "--receive") autoReceive = true; // tests: start as a receiver
+                else if (args[i] == "--share") autoShare = true; // tests: share this screen at start
+                else if (args[i] == "--pull" && i + 1 < args.Length) autoPull = args[++i];
                 else if (args[i] == "--page" && i + 1 < args.Length) startPage = int.Parse(args[++i]); // screenshots
                 else if (args[i] == "--fps" && i + 1 < args.Length) { Caster.FPS = int.Parse(args[++i]); argFps = true; }
                 else if (args[i] == "--size" && i + 1 < args.Length)
@@ -2759,7 +2775,7 @@ namespace TVCast
             // found PCs as tiles (icon, name, address) like in the phone app; the hidden box
             // keeps the picked entry for the cast code
             pcBox.Visible = false;
-            pcList.SetBounds(Ui.S(14), Ui.S(64), Ui.S(CI), Ui.S(94));
+            pcList.SetBounds(Ui.S(14), Ui.S(64), Ui.S(CI), Ui.S(80));
             pcList.AutoScroll = true;
             pcBox.SelectedIndexChanged += delegate { ShowPcRows(); };
             pcFindBtn.Text = "";
@@ -2777,19 +2793,19 @@ namespace TVCast
             pcSoundBox.Checked = pcControlBox.Checked = true;
             pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
             pcBox.TextChanged += delegate { ShowDirections(); };
-            pcGoBtn.Text = Texts.ShowPc;
+            pcGoBtn.Text = Texts.ShareStart;
             pcGoBtn.Glyph = Icons.Play;
             pcGoBtn.Font = goBtn.Font;
-            pcGoBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
-            pcGoBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
-            pcGoBtn.Click += delegate { Toggle(true); };
+            pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
+            pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
+            pcGoBtn.Click += delegate { ToggleShare(); };
             GlyphTile sendTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
             sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
             sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
             GlyphTile getTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
             getTile.GlyphFont = sendTile.GlyphFont;
             getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
-            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcList, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
+            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, recvName, pcSoundBox, pcControlBox, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
             getHeader.Location = Ui.P(62, 12);
@@ -2799,12 +2815,12 @@ namespace TVCast
             getDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
             recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
             recvName.SetBounds(Ui.S(14), Ui.S(68), Ui.S(CI), Ui.S(40));
-            recvCode.SetBounds(Ui.S(14), Ui.S(104), Ui.S(CI), Ui.S(40));
+            recvCode.SetBounds(Ui.S(14), Ui.S(146), Ui.S(CI), Ui.S(38));
             recvCode.TextAlign = ContentAlignment.MiddleLeft;
             recvCode.Font = new Font("Segoe UI Semibold", 20f);
             recvKeys.Text = Texts.ReceiveKeys;
             recvKeys.Font = new Font("Segoe UI", 8.5f);
-            recvKeys.SetBounds(Ui.S(14), Ui.S(142), Ui.S(CI), Ui.S(44));
+            recvKeys.Visible = false; // now the tooltip of the Show button
             ownPointerBox.Text = Texts.OwnPointer;
             ownPointerBox.Glyph = Icons.Touch;
             ownPointerBox.Location = Ui.P(14, 188);
@@ -2814,10 +2830,11 @@ namespace TVCast
             recvBtn.Text = Texts.ReceiveStart;
             recvBtn.Glyph = Icons.Play;
             recvBtn.Font = goBtn.Font;
-            recvBtn.Location = Ui.P(14, CH - 14 - 38);
-            recvBtn.Size = new Size(Ui.S(CI), Ui.S(38));
-            recvBtn.Click += delegate { ToggleReceive(); };
-            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, recvName, recvCode, recvKeys, ownPointerBox, recvBtn });
+            recvBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
+            recvBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
+            recvBtn.Click += delegate { ToggleView(); };
+            new ToolTip().SetToolTip(recvBtn, Texts.ReceiveKeys);
+            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, pcBox, pcList, recvCode, recvKeys, ownPointerBox, pcFindBtn, recvBtn });
             recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
             ShowPcRows();
             ShowDirections();
@@ -2881,8 +2898,8 @@ namespace TVCast
             IntPtr clickHook = WindowMover.WatchRealClicks(); // ... and one the PC's own mouse picks comes to it
             FormClosed += delegate { WindowMover.Unwatch(fgHook); WindowMover.UnwatchClicks(clickHook); };
             timer.Start();
-            Shown += delegate { if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(findOnly); };
-            FormClosing += delegate { MoveWindowsHome(); StopCast(); StopReceive(); };
+            Shown += delegate { if (autoShare) { ShowPage(3); ToggleShare(); } else if (autoPull != null) { ShowPage(3); pcBox.Items.Add(autoPull); pcBox.SelectedIndex = 0; ToggleView(); } else if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(findOnly); };
+            FormClosing += delegate { StopShare(); MoveWindowsHome(); StopCast(); StopReceive(); };
         }
 
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
@@ -2898,7 +2915,7 @@ namespace TVCast
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
             pcFindBtn.Style(Ui.Subtle, Ui.Ink);
-            bool tv = caster != null && web == null && !castToPc, pc = caster != null && web == null && castToPc, ipad = web != null, rx = receiver != null;
+            bool tv = caster != null && web == null && !castToPc, pc = share != null || (caster != null && web == null && castToPc), ipad = web != null, rx = receiver != null;
             goBtn.Glyph = tv ? Icons.Stop : Icons.Play;
             ipadBtn.Glyph = ipad ? Icons.Stop : Icons.Play;
             pcGoBtn.Glyph = pc ? Icons.Stop : Icons.Play;
@@ -3120,17 +3137,20 @@ namespace TVCast
             ThreadPool.QueueUserWorkItem(delegate
             {
                 List<KeyValuePair<string, IPAddress>> found = Discovery.Find(1500);
+                List<KeyValuePair<string, IPAddress>> sharing = ShareHost.Find(700);
                 BeginInvoke((MethodInvoker)delegate
                 {
                     searching = false;
-                    if (quiet && found.Count == 0) return;
+                    if (quiet && found.Count == 0 && sharing.Count == 0) return;
                     if (caster == null) findBtn.Enabled = pcFindBtn.Enabled = true;
                     // PCs go to the "This PC" page, TVs and phones to the CastLink app page
                     string prevPc = pcBox.Text, prevTv = tvBox.Text;
                     tvBox.Items.Clear();
                     pcBox.Items.Clear();
                     foreach (KeyValuePair<string, IPAddress> f in found)
-                        (Discovery.IsPc(f.Value) ? pcBox : tvBox).Items.Add(f.Key + " (" + f.Value + ")");
+                        if (!Discovery.IsPc(f.Value)) tvBox.Items.Add(f.Key + " (" + f.Value + ")");
+                    // PCs that share their screen now, for the second PC to pick
+                    foreach (KeyValuePair<string, IPAddress> f in sharing) pcBox.Items.Add(f.Key + " (" + f.Value + ")");
                     if (tvBox.Items.Count > 0 && caster == null && !tvBox.Visible)
                     {
                         int keepTv = tvBox.Items.IndexOf(prevTv);
@@ -3402,6 +3422,65 @@ namespace TVCast
             getDir.Text = Texts.GetSub;
         }
 
+        /// <summary>the first PC: share this screen; a second PC that picks it gets the picture</summary>
+        void ToggleShare()
+        {
+            if (share != null)
+            {
+                StopShare();
+                Say(Texts.ShareOff, Ui.Idle);
+                return;
+            }
+            if (caster != null) return; // already showing on a phone or TV
+            share = new ShareHost();
+            if (share.Error != null) { Say(share.Error, Ui.Danger); share = null; return; }
+            share.Pulled = (ip, name) => BeginInvoke((MethodInvoker)delegate { OnPulled(ip, name); });
+            pcGoBtn.Text = Texts.ShareStop;
+            StyleButtons();
+            Say(string.Format(Texts.ShareWaiting, Environment.MachineName), Ui.Waiting);
+        }
+
+        void StopShare()
+        {
+            if (share == null) return;
+            share.Dispose();
+            share = null;
+            if (caster != null && castToPc) { MoveWindowsHome(); StopCast(); }
+            pulledEntry = null;
+            pcGoBtn.Text = Texts.ShareStart;
+            StyleButtons();
+        }
+
+        /// <summary>a second PC picked this one: cast to it (the pairing code is asked as usual)</summary>
+        void OnPulled(IPAddress ip, string name)
+        {
+            if (share == null) return;
+            if (caster != null)
+            {
+                if (!castToPc) return; // busy with a phone or TV
+                IPAddress now = ParseTv(pulledEntry);
+                if (ip.Equals(now)) return; // already casting to it
+                StopCast();
+            }
+            pulledEntry = name + " (" + ip + ")";
+            Toggle(true);
+            if (caster != null) pcGoBtn.Text = Texts.ShareStop;
+        }
+
+        /// <summary>the second PC: wait for the picture and ask the picked PC to send it</summary>
+        void ToggleView()
+        {
+            if (receiver != null) { pullFrom = null; StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
+            IPAddress ip = ParseTv(pcBox.Text);
+            if (ip == null) { Say(Texts.PickSharer, Ui.Danger); return; }
+            pullName = Caster.NameOf(pcBox.Text) ?? ip.ToString();
+            ToggleReceive();
+            if (receiver == null) return;
+            pullFrom = ip;
+            lastPullAt = Clock.Ms();
+            ShareHost.AskToCast(ip);
+        }
+
         void ToggleReceive()
         {
             if (receiver != null) { StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
@@ -3410,7 +3489,7 @@ namespace TVCast
             if (receiver.Error != null) { Say(receiver.Error, Ui.Danger); receiver.Dispose(); receiver = null; return; }
             recvBtn.Text = Texts.ReceiveStop;
             StyleButtons();
-            Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
+            Say(string.Format(Texts.ReceiveWaiting, pullName), Ui.Waiting);
         }
 
         void StopReceive()
@@ -3439,6 +3518,13 @@ namespace TVCast
             if (r == null) return;
             string code = r.PairCode;
             recvCode.Text = code ?? "";
+            // keep asking the sharing PC until its picture arrives (a lost packet, or its user
+            // still deciding about the code)
+            if (pullFrom != null && !r.Streaming && Clock.Ms() - lastPullAt > 1500)
+            {
+                lastPullAt = Clock.Ms();
+                ShareHost.AskToCast(pullFrom);
+            }
             ShowDirections();
             if (r.Streaming && viewer == null)
             {
@@ -3465,7 +3551,7 @@ namespace TVCast
             else
             {
                 // what arrived so far, to tell a blocked network from a refused connection
-                string[] wait = string.Format(Texts.ReceiveWaiting, Environment.MachineName).Split('\n');
+                string[] wait = string.Format(Texts.ReceiveWaiting, pullName).Split('\n');
                 string seen = string.Format(Texts.ReceivePackets, r.Packets, r.Rejected);
                 Say(wait[0] + " · " + seen + "\n" + (r.LastEvent.Length > 0 ? r.LastEvent : wait[1]), Ui.Waiting);
             }
@@ -3488,7 +3574,7 @@ namespace TVCast
             web = null;
             goBtn.Text = Texts.Show;
             ipadBtn.Text = Texts.ShowIpad;
-            pcGoBtn.Text = Texts.ShowPc;
+            pcGoBtn.Text = share != null ? Texts.ShareStop : Texts.ShareStart;
             castToPc = false;
             StyleButtons();
             ipadMode = "";
@@ -3541,7 +3627,8 @@ namespace TVCast
                 return;
             }
             ComboBox box = toPc ? pcBox : tvBox;
-            IPAddress ip = ParseTv(box.Text);
+            string entry = toPc && pulledEntry != null ? pulledEntry : box.Text;
+            IPAddress ip = ParseTv(entry);
             if (ip == null)
             {
                 Say(Texts.EnterIp, Ui.Danger);
@@ -3552,7 +3639,7 @@ namespace TVCast
             if (!argFps || fpsBox.Checked != (Caster.FPS >= 120)) Caster.FPS = fpsBox.Checked ? 120 : 60;
             castToPc = toPc;
             caster = new Caster(ip, (toPc ? pcSoundBox : soundBox).Checked);
-            caster.TvName = Caster.NameOf(box.Text); // to find it again when the USB cable is pulled
+            caster.TvName = Caster.NameOf(entry); // to find it again when the USB cable is pulled
             caster.AllowControl = (toPc ? pcControlBox : controlBox).Checked; // the device that shows this PC may control it
             caster.Start();
             FlatButton go = toPc ? pcGoBtn : goBtn;
