@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2106,6 +2106,8 @@ namespace TVCast
             SendHeader = lt ? "Antras kompiuteris" : "Second PC";
             GetHeader = lt ? "Pirmas kompiuteris" : "First PC";
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
+            TvSearching = lt ? "Ieškoma… Atidaryk CastLink telefone ar televizoriuje." : "Looking… Open CastLink on the phone or TV.";
+            TypeAddress = lt ? "Įvesti pavadinimą ar adresą ranka" : "Type a name or address by hand";
             PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
@@ -2340,7 +2342,8 @@ namespace TVCast
     {
         public const string Phone = "\uE8EA", Globe = "\uE774", Monitor = "\uE7F4", Settings = "\uE713",
             Play = "\uE768", Stop = "\uE71A", Search = "\uE721", Add = "\uE710",
-            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896", Upload = "\uE898";
+            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896", Upload = "\uE898",
+            Pc = "\uE977", Edit = "\uE70F";
         static string family;
         static readonly Dictionary<float, Font> cache = new Dictionary<float, Font>();
 
@@ -2361,7 +2364,7 @@ namespace TVCast
     /// <summary>one found device: icon tile, name and address, highlighted when picked</summary>
     sealed class DeviceRow : Control
     {
-        public string Title = "", Sub = "";
+        public string Title = "", Sub = "", Glyph = Icons.Monitor;
         bool selected, hover;
         public bool Selected { get { return selected; } set { selected = value; Invalidate(); } }
 
@@ -2393,7 +2396,7 @@ namespace TVCast
             using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
                 new PointF(x, y), new PointF(x + t, y + t), Color.FromArgb(56, 132, 255), Color.FromArgb(124, 77, 255)))
                 g.FillPath(b, p);
-            TextRenderer.DrawText(g, Icons.Monitor, Icons.Font(11f), new Rectangle(x, y, t, t), Color.White,
+            TextRenderer.DrawText(g, Glyph, Icons.Font(11f), new Rectangle(x, y, t, t), Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             int tx = x + t + Ui.S(10), tw = Width - tx - Ui.S(8);
             using (Font bold = new Font("Segoe UI Semibold", 9.5f))
@@ -2515,7 +2518,8 @@ namespace TVCast
         readonly Label recvName = new Label(), recvCode = new Label(), recvKeys = new Label();
         // ... and the top half: send this screen to another PC (PCs found by the search are listed only here)
         readonly ComboBox pcBox = new ComboBox();
-        readonly Panel pcList = new Panel();
+        readonly Panel pcList = new Panel(), tvList = new Panel();
+        readonly FlatButton typeBtn = new FlatButton();
         readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
         readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck();
         readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
@@ -2639,36 +2643,49 @@ namespace TVCast
             pages = new[] { appPage, webPage, screensPage, recvPage };
 
             // CastLink app (Android phone, tablet or TV)
-            tvLabel = new Label { Text = Texts.TvLabel, Location = Ui.P(16, 100), AutoSize = true };
-            tvBox.Location = Ui.P(16, 124);
-            tvBox.Width = Ui.S(PW - 32 - 124);
-            findBtn.Text = Texts.Find;
+            // found phones and TVs as tiles in two columns; the pencil swaps the tiles for a box
+            // to type a name or address by hand
+            tvLabel = new Label { Text = Texts.TvLabel, Location = Ui.P(16, 100), AutoSize = true, Visible = false };
+            tvBox.Location = Ui.P(16, 104);
+            tvBox.Width = Ui.S(PW - 32);
+            tvBox.Visible = false;
+            tvList.SetBounds(Ui.S(16), Ui.S(100), Ui.S(PW - 32), Ui.S(100));
+            tvList.AutoScroll = true;
+            tvBox.SelectedIndexChanged += delegate { ShowTvRows(); };
+            findBtn.Text = "";
             findBtn.Glyph = Icons.Search;
-            findBtn.Location = Ui.P(PW - 16 - 116, 122);
-            findBtn.Size = new Size(Ui.S(116), Ui.S(32));
+            findBtn.Location = Ui.P(16, PH - 16 - 42);
+            findBtn.Size = new Size(Ui.S(42), Ui.S(42));
             findBtn.Click += delegate { Search(); };
+            new ToolTip().SetToolTip(findBtn, Texts.Find);
+            typeBtn.Text = "";
+            typeBtn.Glyph = Icons.Edit;
+            typeBtn.Location = Ui.P(16 + 50, PH - 16 - 42);
+            typeBtn.Size = findBtn.Size;
+            typeBtn.Click += delegate { TypeByHand(!tvBox.Visible); };
+            new ToolTip().SetToolTip(typeBtn, Texts.TypeAddress);
             fpsBox.Text = Texts.Fps120;
-            fpsBox.Location = Ui.P(16, 168);
+            fpsBox.Location = Ui.P(16, 208);
             fpsBox.Glyph = Icons.Speed;
             goBtn.Text = Texts.Show;
             goBtn.Glyph = Icons.Play;
             goBtn.Font = new Font("Segoe UI Semibold", 10.5f);
-            goBtn.Location = Ui.P(16, PH - 16 - 42);
-            goBtn.Size = new Size(Ui.S(PW - 32), Ui.S(42));
+            goBtn.Location = Ui.P(16 + 100, PH - 16 - 42);
+            goBtn.Size = new Size(Ui.S(PW - 32 - 100), Ui.S(42));
             goBtn.Click += delegate { Toggle(); };
             soundBox.Text = webSoundBox.Text = Texts.Sound;
             controlBox.Text = webControlBox.Text = Texts.AllowControl;
             soundBox.Glyph = webSoundBox.Glyph = Icons.Volume;
             controlBox.Glyph = webControlBox.Glyph = Icons.Touch;
             soundBox.Checked = controlBox.Checked = webSoundBox.Checked = webControlBox.Checked = true;
-            soundBox.Location = Ui.P(16, 204);
-            controlBox.Location = Ui.P(16, 240);
+            soundBox.Location = Ui.P(16, 236);
+            controlBox.Location = Ui.P(16, 264);
             // the browser page: at the bottom, under the address and the code
             webSoundBox.Location = Ui.P(16, PH - 16 - 42 - 80);
             webControlBox.Location = Ui.P(16, PH - 16 - 42 - 44);
             controlBox.CheckedChanged += delegate { if (caster != null && web == null) caster.AllowControl = controlBox.Checked; };
             webControlBox.CheckedChanged += delegate { if (web != null) web.AllowControl = webControlBox.Checked; };
-            appPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Phone, tvLabel), tvLabel, tvBox, findBtn, fpsBox, soundBox, controlBox, goBtn });
+            appPage.Controls.AddRange(new Control[] { tvLabel, tvBox, tvList, findBtn, typeBtn, fpsBox, soundBox, controlBox, goBtn });
 
             // browser (Mac, another PC, iPad): address and code while it runs
             urlCaption.Text = Texts.OpenSafari;
@@ -2682,8 +2699,8 @@ namespace TVCast
             ipadBtn.Text = Texts.ShowIpad;
             ipadBtn.Glyph = Icons.Play;
             ipadBtn.Font = goBtn.Font;
-            ipadBtn.Location = goBtn.Location;
-            ipadBtn.Size = goBtn.Size;
+            ipadBtn.Location = Ui.P(16, PH - 16 - 42);
+            ipadBtn.Size = new Size(Ui.S(PW - 32), Ui.S(42));
             ipadBtn.Click += delegate { ToggleIpad(); };
             foreach (Label l in new[] { urlIcon, codeIcon }) { l.Font = Icons.Font(10f); l.AutoSize = false; l.TextAlign = ContentAlignment.MiddleCenter; captionIcons.Add(l); }
             urlIcon.Text = Icons.Link;
@@ -2859,6 +2876,8 @@ namespace TVCast
         void StyleButtons()
         {
             foreach (Control c in pcList.Controls) c.Enabled = !(caster != null && castToPc); // no other pick while casting to a PC
+            foreach (Control c in tvList.Controls) c.Enabled = !(caster != null && !castToPc);
+            typeBtn.Enabled = caster == null;
             findBtn.Style(Ui.Subtle, Ui.Ink);
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
@@ -2888,7 +2907,10 @@ namespace TVCast
                 pcSoundBox, pcControlBox, recvName, recvCode, sendHeader, getHeader }) c.ForeColor = Ui.Ink;
             foreach (Control c in new Control[] { sendDir, getDir, recvKeys }) c.ForeColor = Ui.Muted;
             sendCard.BackColor = getCard.BackColor = pcList.BackColor = Ui.Field;
+            tvList.BackColor = Ui.CardBg;
+            typeBtn.Style(Ui.Subtle, Ui.Ink);
             ShowPcRows();
+            ShowTvRows();
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
             tvBox.BackColor = screenBox.BackColor = pcBox.BackColor = Ui.Field;
@@ -2943,7 +2965,8 @@ namespace TVCast
         {
             for (int i = 0; i < pages.Length; i++) { pages[i].Visible = i == n; nav[i].Selected = i == n; }
             if (n == 2) FillScreens();
-            if (n == 3 && caster == null && receiver == null && !searching && pcBox.Items.Count == 0) Search(false, true);
+            if (caster == null && receiver == null && !searching
+                && ((n == 3 && pcBox.Items.Count == 0) || (n == 0 && tvBox.Items.Count == 0 && !tvBox.Visible))) Search(false, true);
         }
 
         /// <summary>first line = the state next to the dot, the rest = grey details</summary>
@@ -2994,44 +3017,72 @@ namespace TVCast
         /// <summary>draws the found PCs as tiles; a click picks one, a double click shows this screen there</summary>
         void ShowPcRows()
         {
-            pcList.SuspendLayout();
-            Control[] old = new Control[pcList.Controls.Count];
-            pcList.Controls.CopyTo(old, 0);
+            ShowRows(pcBox, pcList, 1, Texts.PcSearching, caster != null && castToPc, delegate { Toggle(true); });
+        }
+
+        /// <summary>the same for phones and TVs on the CastLink app page, two per row</summary>
+        void ShowTvRows()
+        {
+            ShowRows(tvBox, tvList, 2, Texts.TvSearching, caster != null && !castToPc, delegate { Toggle(); });
+        }
+
+        /// <summary>swaps the tiles for the old box to type a name or address</summary>
+        void TypeByHand(bool on)
+        {
+            tvBox.Visible = on;
+            tvList.Visible = !on;
+            if (on) { tvBox.Focus(); tvBox.SelectAll(); }
+            else ShowTvRows();
+        }
+
+        static string GlyphFor(string name, bool pc)
+        {
+            if (pc) return Icons.Pc;
+            string n = name.ToUpperInvariant();
+            return n.StartsWith("SM-") || n.Contains("PHONE") || n.Contains("PIXEL") || n.Contains("TELEFON") || n.Contains("USB") ? Icons.Phone : Icons.Monitor;
+        }
+
+        void ShowRows(ComboBox box, Panel list, int columns, string emptyText, bool locked, MethodInvoker start)
+        {
+            list.SuspendLayout();
+            Control[] old = new Control[list.Controls.Count];
+            list.Controls.CopyTo(old, 0);
             foreach (Control c in old) c.Dispose();
-            if (pcBox.Items.Count == 0)
+            if (box.Items.Count == 0)
             {
-                Label empty = new Label { Text = Texts.PcSearching, ForeColor = Ui.Muted, AutoSize = false };
-                empty.SetBounds(0, Ui.S(6), pcList.Width, Ui.S(60));
-                pcList.Controls.Add(empty);
+                Label empty = new Label { Text = emptyText, ForeColor = Ui.Muted, AutoSize = false };
+                empty.SetBounds(0, Ui.S(6), list.Width, Ui.S(60));
+                list.Controls.Add(empty);
             }
-            bool locked = caster != null && castToPc;
-            int w = pcList.Width - (pcBox.Items.Count > 2 ? SystemInformation.VerticalScrollBarWidth : 0);
-            for (int i = 0; i < pcBox.Items.Count; i++)
+            int rows = (box.Items.Count + columns - 1) / columns;
+            int inner = list.Width - (rows * Ui.S(50) > list.Height ? SystemInformation.VerticalScrollBarWidth : 0);
+            int gap = Ui.S(8), w = (inner - gap * (columns - 1)) / columns;
+            for (int i = 0; i < box.Items.Count; i++)
             {
-                string entry = pcBox.Items[i].ToString();
+                string entry = box.Items[i].ToString();
                 string name = Caster.NameOf(entry) ?? entry;
                 int open = entry.LastIndexOf(" (", StringComparison.Ordinal);
                 DeviceRow row = new DeviceRow
                 {
                     Title = name,
                     Sub = open > 0 ? entry.Substring(open + 2).TrimEnd(')') : "",
-                    Selected = i == pcBox.SelectedIndex,
+                    Glyph = GlyphFor(entry, box == pcBox),
+                    Selected = i == box.SelectedIndex,
                     Enabled = !locked
                 };
-                row.SetBounds(0, i * Ui.S(50), w, Ui.S(44));
+                row.SetBounds((i % columns) * (w + gap), (i / columns) * Ui.S(50), w, Ui.S(44));
                 int index = i;
-                row.Click += delegate { if (pcBox.SelectedIndex != index) pcBox.SelectedIndex = index; };
-                row.DoubleClick += delegate { if (caster == null && receiver == null) { pcBox.SelectedIndex = index; Toggle(true); } };
-                pcList.Controls.Add(row);
+                row.Click += delegate { if (box.SelectedIndex != index) box.SelectedIndex = index; };
+                row.DoubleClick += delegate { if (caster == null && receiver == null) { box.SelectedIndex = index; start(); } };
+                list.Controls.Add(row);
             }
-            pcList.ResumeLayout();
+            list.ResumeLayout();
         }
 
-        /// <summary>while the PC page is open and no PC is listed, look again every few seconds in
-        /// the background, so the first PC shows up by itself once it waits for a connection</summary>
         void AutoFindPcs()
         {
-            if (caster != null || receiver != null || searching || !recvPage.Visible || pcBox.Items.Count > 0) { pcSearchWait = 0; return; }
+            bool empty = recvPage.Visible ? pcBox.Items.Count == 0 : appPage.Visible && tvBox.Items.Count == 0 && !tvBox.Visible;
+            if (caster != null || receiver != null || searching || !empty) { pcSearchWait = 0; return; }
             if (++pcSearchWait < 3) return;
             pcSearchWait = 0;
             Search(false, true);
@@ -3056,12 +3107,16 @@ namespace TVCast
                     if (quiet && found.Count == 0) return;
                     if (caster == null) findBtn.Enabled = pcFindBtn.Enabled = true;
                     // PCs go to the "This PC" page, TVs and phones to the CastLink app page
-                    string prevPc = pcBox.Text;
+                    string prevPc = pcBox.Text, prevTv = tvBox.Text;
                     tvBox.Items.Clear();
                     pcBox.Items.Clear();
                     foreach (KeyValuePair<string, IPAddress> f in found)
                         (Discovery.IsPc(f.Value) ? pcBox : tvBox).Items.Add(f.Key + " (" + f.Value + ")");
-                    if (pick && tvBox.Items.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
+                    if (tvBox.Items.Count > 0 && caster == null && !tvBox.Visible)
+                    {
+                        int keepTv = tvBox.Items.IndexOf(prevTv);
+                        tvBox.SelectedIndex = keepTv >= 0 ? keepTv : 0;
+                    }
                     // a PC that was found just now is picked by itself (the one picked before, if still there)
                     if (pcBox.Items.Count > 0 && !(caster != null && castToPc))
                     {
@@ -3069,6 +3124,7 @@ namespace TVCast
                         pcBox.SelectedIndex = keep >= 0 ? keep : 0;
                     }
                     ShowPcRows();
+                    ShowTvRows();
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
