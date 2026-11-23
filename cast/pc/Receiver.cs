@@ -778,6 +778,11 @@ namespace TVCast
         volatile int picX, picY, picW = 1, picH = 1; // where the picture is drawn in the window
         int lastX = -1, lastY = -1;
         readonly Cursor blank;
+        /// <summary>own pointer: this PC's mouse stays here (the Windows arrow over the picture);
+        /// the other PC's pointer is borrowed only while a button is down (CLICKAT 8 / WHEELAT 9)
+        /// and put back after, so the person at the other PC keeps using their mouse</summary>
+        public static volatile bool OwnPointer = true;
+        int buttonsDown;
 
         public ViewerForm(string title, PcReceiver receiver)
         {
@@ -802,7 +807,7 @@ namespace TVCast
             MouseMove += (s, e) => Pointer(e.X, e.Y, false);
             MouseDown += (s, e) => Press(e, true);
             MouseUp += (s, e) => Press(e, false);
-            MouseWheel += (s, e) => { if (receiver.ControlAllowed) receiver.SendInput(new byte[] { 12, (byte)(e.Delta >> 8), (byte)e.Delta, 0, 0 }); };
+            MouseWheel += (s, e) => Wheel(e);
         }
 
         /// <summary>window point -> 0..65535 on the picture (clamped to its edges); unit-tested</summary>
@@ -816,8 +821,9 @@ namespace TVCast
         void Pointer(int x, int y, bool force)
         {
             bool ctl = receiver.ControlAllowed;
-            Cursor = ctl ? blank : Cursors.Default;
+            Cursor = ctl && !OwnPointer ? blank : Cursors.Default;
             if (!ctl || (!force && x == lastX && y == lastY)) return;
+            if (OwnPointer && buttonsDown == 0) return; // only a drag moves the borrowed pointer
             lastX = x; lastY = y;
             int[] r = ToRemote(x, y, picX, picY, picW, picH);
             receiver.SendInput(new byte[] { 11, (byte)(r[0] >> 8), (byte)r[0], (byte)(r[1] >> 8), (byte)r[1] });
@@ -828,8 +834,28 @@ namespace TVCast
             if (!receiver.ControlAllowed) return;
             int b = e.Button == MouseButtons.Left ? 0 : e.Button == MouseButtons.Right ? 1 : e.Button == MouseButtons.Middle ? 2 : -1;
             if (b < 0) return;
+            if (OwnPointer)
+            {
+                buttonsDown = Math.Max(0, buttonsDown + (down ? 1 : -1));
+                int[] r = ToRemote(e.X, e.Y, picX, picY, picW, picH);
+                lastX = e.X; lastY = e.Y;
+                receiver.SendInput(new byte[] { 8, (byte)b, (byte)(down ? 1 : 0), (byte)(r[0] >> 8), (byte)r[0], (byte)(r[1] >> 8), (byte)r[1] });
+                return;
+            }
             Pointer(e.X, e.Y, true); // first where, then the press there
             receiver.SendInput(new byte[] { 7, (byte)b, (byte)(down ? 1 : 0) });
+        }
+
+        void Wheel(MouseEventArgs e)
+        {
+            if (!receiver.ControlAllowed) return;
+            if (OwnPointer)
+            {
+                int[] r = ToRemote(e.X, e.Y, picX, picY, picW, picH);
+                receiver.SendInput(new byte[] { 9, (byte)(e.Delta >> 8), (byte)e.Delta, 0, 0, (byte)(r[0] >> 8), (byte)r[0], (byte)(r[1] >> 8), (byte)r[1] });
+                return;
+            }
+            receiver.SendInput(new byte[] { 12, (byte)(e.Delta >> 8), (byte)e.Delta, 0, 0 });
         }
 
         void Hook()

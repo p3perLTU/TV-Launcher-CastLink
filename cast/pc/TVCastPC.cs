@@ -2000,7 +2000,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress, OwnPointer, OwnPointerTip;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2110,6 +2110,9 @@ namespace TVCast
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
             TvSearching = lt ? "Ieškoma… Atidaryk CastLink telefone ar televizoriuje." : "Looking… Open CastLink on the phone or TV.";
             TypeAddress = lt ? "Įvesti pavadinimą ar adresą ranka" : "Type a name or address by hand";
+            OwnPointer = lt ? "Sava pelė" : "Own pointer";
+            OwnPointerTip = lt ? "Šio kompiuterio pelė nejudina kito kompiuterio žymeklio: jis pasiskolinamas tik spustelėjimui ir grįžta atgal. Taip abu gali naudoti pelę vienu metu."
+                              : "This PC's mouse does not move the other PC's pointer: it is borrowed only for a click and put back, so both can use a mouse at once.";
             PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
@@ -2523,7 +2526,7 @@ namespace TVCast
         readonly Panel pcList = new Panel(), tvList = new Panel();
         readonly FlatButton typeBtn = new FlatButton();
         readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
-        readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck();
+        readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck(), ownPointerBox = new FlatCheck();
         readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
         readonly Card sendCard = new Card(), getCard = new Card();
         bool castToPc;
@@ -2797,14 +2800,20 @@ namespace TVCast
             recvCode.Font = new Font("Segoe UI Semibold", 20f);
             recvKeys.Text = Texts.ReceiveKeys;
             recvKeys.Font = new Font("Segoe UI", 8.5f);
-            recvKeys.SetBounds(Ui.S(14), Ui.S(146), Ui.S(CI), Ui.S(48));
+            recvKeys.SetBounds(Ui.S(14), Ui.S(142), Ui.S(CI), Ui.S(44));
+            ownPointerBox.Text = Texts.OwnPointer;
+            ownPointerBox.Glyph = Icons.Touch;
+            ownPointerBox.Location = Ui.P(14, 188);
+            ownPointerBox.Checked = true;
+            ownPointerBox.CheckedChanged += delegate { ViewerForm.OwnPointer = ownPointerBox.Checked; SaveAll(); };
+            new ToolTip().SetToolTip(ownPointerBox, Texts.OwnPointerTip);
             recvBtn.Text = Texts.ReceiveStart;
             recvBtn.Glyph = Icons.Play;
             recvBtn.Font = goBtn.Font;
             recvBtn.Location = Ui.P(14, CH - 14 - 38);
             recvBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             recvBtn.Click += delegate { ToggleReceive(); };
-            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, recvName, recvCode, recvKeys, recvBtn });
+            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, recvName, recvCode, recvKeys, ownPointerBox, recvBtn });
             recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
             ShowPcRows();
             ShowDirections();
@@ -2851,6 +2860,7 @@ namespace TVCast
                 if (lines.Length > 5) savedScreen = lines[5];
                 webSoundBox.Checked = lines.Length > 6 ? lines[6] != "0" : soundBox.Checked;
                 webControlBox.Checked = lines.Length > 7 ? lines[7] != "0" : controlBox.Checked;
+                if (lines.Length > 8) ownPointerBox.Checked = lines[8] != "0";
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -3485,7 +3495,7 @@ namespace TVCast
         void SaveAll()
         {
             SaveSettings(new[] { "", soundBox.Checked ? "1" : "0", fpsBox.Checked ? "120" : "60", controlBox.Checked ? "1" : "0", ipadCode ?? "", SelectedScreen(),
-                webSoundBox.Checked ? "1" : "0", webControlBox.Checked ? "1" : "0" });
+                webSoundBox.Checked ? "1" : "0", webControlBox.Checked ? "1" : "0", ownPointerBox.Checked ? "1" : "0" });
         }
 
         /// <summary>the monitors for the screen box; the saved one (or the primary) selected</summary>
