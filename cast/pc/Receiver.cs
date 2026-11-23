@@ -430,7 +430,9 @@ namespace TVCast
         /// <summary>shown in the window</summary>
         public volatile string PairCode, CasterName = "", Error;
         public volatile bool Streaming;
-        public volatile int ShownFrames, Width, Height, Rejected;
+        public volatile int ShownFrames, Width, Height, Rejected, Packets;
+        /// <summary>the last thing that happened on the network, for the window (diagnostics)</summary>
+        public volatile string LastEvent = "";
         /// <summary>timing totals for the log: decode, NV12 -> BGRX, draw (100 ns ticks) and frame count</summary>
         public long DecodeTicks, ConvertTicks, DrawTicks, TimedFrames;
         public int Lost { get { return assembler.Lost; } }
@@ -482,13 +484,20 @@ namespace TVCast
                 catch (ObjectDisposedException) { return; }
                 IPEndPoint src = (IPEndPoint)from;
                 if (n < 1) continue;
+                Packets++;
                 // only home-network devices; while one casts, only that one (via the keys)
-                if (!Proto.IsLanV4(src.Address.GetAddressBytes())) { Rejected++; continue; }
-                if (buf[0] == Proto.WHO) { SendRaw(Name(), src); continue; }
+                if (!Proto.IsLanV4(src.Address.GetAddressBytes())) { Rejected++; LastEvent = "not a home address: " + src.Address; continue; }
+                if (buf[0] == Proto.WHO) { SendRaw(Name(), src); LastEvent = "WHO " + src.Address; continue; }
                 if (buf[0] == SecureLink.HELLO) { OnHello(buf, n, src); continue; }
                 SecureLink.Session l = link;
                 int m = buf[0] == SecureLink.SEALED && l != null ? l.Open(buf, n, inner) : -1;
-                if (m < 1) { Rejected++; continue; }
+                if (m < 1)
+                {
+                    Rejected++;
+                    LastEvent = buf[0] == Proto.CONFIG || buf[0] == Proto.VIDEO ? "old, unencrypted CastLink: " + src.Address
+                        : buf[0] == SecureLink.SEALED ? "sealed packet that does not open: " + src.Address : "packet " + buf[0] + " from " + src.Address;
+                    continue;
+                }
                 sender = src; // only the caster has the keys, so it may move: follow it
                 long now = Clock.Ms();
                 lastLinkAt = now;
@@ -531,13 +540,14 @@ namespace TVCast
         void OnHello(byte[] buf, int n, IPEndPoint from)
         {
             SecureLink.Hello h = SecureLink.Parse(buf, n);
-            if (h == null || h.Echo != null) return;
+            if (h == null || h.Echo != null) { Rejected++; LastEvent = "HELLO of another version: " + from.Address; return; }
+            LastEvent = "HELLO " + h.Name + " " + from.Address;
             if (link != null && helloOkBytes != null && SecureLink.Same(h.Nonce, linkHelloNonce)) { SendRaw(helloOkBytes, from); return; }
             long now = Clock.Ms();
             IPEndPoint cur = sender;
             bool busy = link != null && now - lastLinkAt < IDLE_MS && !SecureLink.Same(h.Static, linkCasterStatic)
                 && (cur == null || !cur.Address.Equals(from.Address));
-            if (busy || now - lastHelloAt < 250) { Rejected++; return; }
+            if (busy || now - lastHelloAt < 250) { Rejected++; LastEvent = (busy ? "busy, HELLO refused: " : "HELLO too soon: ") + from.Address; return; }
             lastHelloAt = now;
             try
             {

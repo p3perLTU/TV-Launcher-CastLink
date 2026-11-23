@@ -1985,7 +1985,7 @@ namespace TVCast
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
-            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff;
+            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2088,6 +2088,7 @@ namespace TVCast
             ReceiveKeys = lt ? "Jei kitas kompiuteris leidžia valdyti, pelė ir visa klaviatūra (ir Alt+Tab, Win) valdo jį. Ctrl+Alt+Enter – visas ekranas / langas."
                              : "If the other PC allows control, the mouse and the whole keyboard (Alt+Tab and Win too) control it. Ctrl+Alt+Enter: full screen / window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
+            ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -3139,7 +3140,13 @@ namespace TVCast
             if (r.Error != null) Say(r.Error, Ui.Danger);
             else if (code != null) Say(Texts.ReceiveCodeAsk + "\n" + code, Ui.Waiting);
             else if (r.Streaming) Say(string.Format(Texts.ReceiveShowing, r.CasterName, fps, r.Width, r.Height), Ui.Good);
-            else Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
+            else
+            {
+                // what arrived so far, to tell a blocked network from a refused connection
+                string[] wait = string.Format(Texts.ReceiveWaiting, Environment.MachineName).Split('\n');
+                string seen = string.Format(Texts.ReceivePackets, r.Packets, r.Rejected);
+                Say(wait[0] + " · " + seen + "\n" + (r.LastEvent.Length > 0 ? r.LastEvent : wait[1]), Ui.Waiting);
+            }
             if (logFile != null && r.Streaming)
             {
                 long n = Interlocked.Exchange(ref r.TimedFrames, 0);
