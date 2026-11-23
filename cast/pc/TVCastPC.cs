@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSearching;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2109,7 +2109,8 @@ namespace TVCast
             PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
-            PcControl = lt ? "Leisti valdyti" : "Allow control";
+            PcControl = lt ? "Valdyti iš pirmo" : "Control from the first";
+            PcSound = lt ? "Garsas pirmame" : "Sound on the first";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2741,7 +2742,7 @@ namespace TVCast
             pcFindBtn.Size = new Size(Ui.S(38), Ui.S(38));
             pcFindBtn.Click += delegate { Search(); };
             new ToolTip().SetToolTip(pcFindBtn, Texts.Find);
-            pcSoundBox.Text = Texts.Sound;
+            pcSoundBox.Text = Texts.PcSound;
             pcSoundBox.Glyph = Icons.Volume;
             pcSoundBox.Location = Ui.P(14, 164);
             pcControlBox.Text = Texts.PcControl;
