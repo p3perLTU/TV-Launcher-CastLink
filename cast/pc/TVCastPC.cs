@@ -2109,7 +2109,7 @@ namespace TVCast
             PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
-            PcControl = lt ? "Valdyti iš pirmo" : "Control from the first";
+            PcControl = lt ? "Leisti valdyti" : "Allow control";
             PcSound = lt ? "Garsas pirmame" : "Sound on the first";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
