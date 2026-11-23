@@ -2118,7 +2118,7 @@ namespace TVCast
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
             SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress, OwnPointer, OwnPointerTip,
-            ShareStart, ShareStop, ShareWaiting, ShareOff, SharePortBusy, PickSharer;
+            ShareStart, ShareStop, ShareWaiting, ShareOff, SharePortBusy, PickSharer, AdminRestart, AdminAlready;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2238,6 +2238,9 @@ namespace TVCast
                               : "Screen shared · waiting for the second PC\nIn CastLink on the second PC pick “{0}” and press “Show”.";
             ShareOff = lt ? "Ekranas nebebendrinamas" : "Screen no longer shared";
             SharePortBusy = lt ? "Prievadas {0} užimtas: gal CastLink jau atidarytas kitame lange?" : "Port {0} is busy: is CastLink already open in another window?";
+            AdminRestart = lt ? "Paleisti iš naujo kaip administratorių: tada antras kompiuteris galės valdyti ir administratoriaus langus (pvz., užduočių tvarkyklę). Windows paklaus leidimo."
+                              : "Restart as administrator: the second PC can then control administrator windows too (e.g. Task Manager). Windows asks first.";
+            AdminAlready = lt ? "CastLink jau veikia kaip administratorius" : "CastLink already runs as administrator";
             PickSharer = lt ? "Pirma pasirink kompiuterį, kurio ekraną nori matyti" : "First pick the PC whose screen you want to see";
             SendSub = lt ? "Bendrina savo ekraną" : "Shares its screen";
             GetSub = lt ? "Rodo pirmojo ekraną" : "Shows the first one's screen";
@@ -2473,7 +2476,7 @@ namespace TVCast
         public const string Phone = "\uE8EA", Globe = "\uE774", Monitor = "\uE7F4", Settings = "\uE713",
             Play = "\uE768", Stop = "\uE71A", Search = "\uE721", Add = "\uE710",
             Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896", Upload = "\uE898",
-            Pc = "\uE977", Edit = "\uE70F";
+            Pc = "\uE977", Edit = "\uE70F", Shield = "\uEA18";
         static string family;
         static readonly Dictionary<float, Font> cache = new Dictionary<float, Font>();
 
@@ -2650,7 +2653,7 @@ namespace TVCast
         readonly ComboBox pcBox = new ComboBox();
         readonly Panel pcList = new Panel(), tvList = new Panel();
         readonly FlatButton typeBtn = new FlatButton();
-        readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
+        readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton(), adminBtn = new FlatButton();
         readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck(), ownPointerBox = new FlatCheck();
         readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
         readonly Card sendCard = new Card(), getCard = new Card();
@@ -2909,16 +2912,25 @@ namespace TVCast
             pcGoBtn.Text = Texts.ShareStart;
             pcGoBtn.Glyph = Icons.Play;
             pcGoBtn.Font = goBtn.Font;
-            pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
-            pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
+            pcGoBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
+            pcGoBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
             pcGoBtn.Click += delegate { ToggleShare(); };
+            // administrator windows (Task Manager, anything "run as administrator") take no input
+            // from a normal app: CastLink restarted with those rights can control them too
+            adminBtn.Text = "";
+            adminBtn.Glyph = Icons.Shield;
+            adminBtn.Location = Ui.P(14, CH - 14 - 38);
+            adminBtn.Size = new Size(Ui.S(38), Ui.S(38));
+            adminBtn.Click += delegate { RestartAsAdmin(); };
+            adminBtn.Enabled = !IsAdmin();
+            new ToolTip().SetToolTip(adminBtn, IsAdmin() ? Texts.AdminAlready : Texts.AdminRestart);
             GlyphTile sendTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
             sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
             sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
             GlyphTile getTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
             getTile.GlyphFont = sendTile.GlyphFont;
             getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
-            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, recvName, pcSoundBox, pcControlBox, pcGoBtn });
+            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, recvName, pcSoundBox, pcControlBox, adminBtn, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
             getHeader.Location = Ui.P(62, 12);
@@ -3028,6 +3040,7 @@ namespace TVCast
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
             pcFindBtn.Style(Ui.Subtle, Ui.Ink);
+            adminBtn.Style(Ui.Subtle, Ui.Ink);
             bool tv = caster != null && web == null && !castToPc, pc = share != null || (caster != null && web == null && castToPc), ipad = web != null, rx = receiver != null;
             goBtn.Glyph = tv ? Icons.Stop : Icons.Play;
             ipadBtn.Glyph = ipad ? Icons.Stop : Icons.Play;
@@ -3534,6 +3547,35 @@ namespace TVCast
         {
             sendDir.Text = Texts.SendSub;
             getDir.Text = Texts.GetSub;
+        }
+
+        static bool IsAdmin()
+        {
+            try
+            {
+                using (System.Security.Principal.WindowsIdentity id = System.Security.Principal.WindowsIdentity.GetCurrent())
+                    return new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>starts CastLink again with administrator rights (Windows asks first) and goes
+        /// on sharing; the second PC asks again by itself and gets the picture back</summary>
+        void RestartAsAdmin()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            StringBuilder a = new StringBuilder();
+            for (int i = 1; i < args.Length; i++)
+                if (args[i] != "--share" && args[i] != "--start" && args[i] != "--ipad") a.Append(" \"").Append(args[i].Replace("\"", "")).Append('"');
+            if (share != null) a.Append(" --share");
+            a.Append(" --page 3");
+            try
+            {
+                Process.Start(new ProcessStartInfo(Application.ExecutablePath, a.ToString()) { UseShellExecute = true, Verb = "runas" });
+            }
+            catch (System.ComponentModel.Win32Exception) { return; } // "No" in the Windows question: stay as is
+            SaveAll();
+            Close();
         }
 
         /// <summary>the first PC: share this screen; a second PC that picks it gets the picture</summary>
