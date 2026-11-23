@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc;
+            SendHeader, GetHeader, ShowPc, ShowPcNone;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2091,20 +2091,21 @@ namespace TVCast
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
             ReceiveHint = lt ? "Kitas kompiuteris su CastLink gali rodyti savo ekraną čia, per visą šio kompiuterio ekraną."
                              : "Another PC with CastLink can show its screen here, full screen on this PC.";
-            ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
+            ReceiveStart = lt ? "Rodyti kito kompiuterio ekraną čia ({0})" : "Show another PC's screen here ({0})";
             ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
             ReceiveWaiting = lt ? "Laukiama ryšio\nKitame kompiuteryje CastLink spausk „Ieškoti“, pasirink „{0}“ ir „Rodyti“."
                                 : "Waiting for a connection\nIn CastLink on the other PC press “Find”, pick “{0}” and “Show”.";
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
-            ReceiveAddress = lt ? "Šio kompiuterio vardas: {0}" : "This PC's name: {0}";
+            ReceiveAddress = lt ? "Kitame kompiuteryje pasirink „{0}“" : "On the other PC pick “{0}”";
             ReceiveKeys = lt ? "Pelė ir visa klaviatūra valdo kitą kompiuterį (jei leista) · Ctrl+Alt+Enter – langas"
                              : "Mouse and whole keyboard control the other PC (if allowed) · Ctrl+Alt+Enter: window";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
-            SendHeader = lt ? "RODYTI ŠĮ EKRANĄ KITAME KOMPIUTERYJE" : "SHOW THIS SCREEN ON ANOTHER PC";
-            GetHeader = lt ? "RODYTI KITO KOMPIUTERIO EKRANĄ ČIA" : "SHOW ANOTHER PC'S SCREEN HERE";
-            ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
+            SendHeader = lt ? "SIŲSTI  ·  {0}  →  KITAS KOMPIUTERIS" : "SEND  ·  {0}  →  ANOTHER PC";
+            GetHeader = lt ? "GAUTI  ·  KITAS KOMPIUTERIS  →  {0}" : "RECEIVE  ·  ANOTHER PC  →  {0}";
+            ShowPc = lt ? "Rodyti {0} ekraną kompiuteryje {1}" : "Show {0}'s screen on {1}";
+            ShowPcNone = lt ? "Pirma pasirink kompiuterį, kuriame rodyti" : "First pick the PC to show it on";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2637,7 +2638,7 @@ namespace TVCast
             // this PC and other PCs: top half sends this screen to another PC, bottom half waits
             // for another PC to show its screen here
             Font headerFont = new Font("Segoe UI Semibold", 8.5f);
-            sendHeader.Text = Texts.SendHeader;
+            sendHeader.Text = string.Format(Texts.SendHeader, Environment.MachineName.ToUpperInvariant());
             sendHeader.Font = headerFont;
             sendHeader.Location = Ui.P(16, 50);
             sendHeader.AutoSize = true;
@@ -2656,7 +2657,8 @@ namespace TVCast
             pcControlBox.Location = Ui.P(16, 138);
             pcSoundBox.Checked = pcControlBox.Checked = true;
             pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
-            pcGoBtn.Text = Texts.ShowPc;
+            pcBox.TextChanged += delegate { if (!(caster != null && castToPc)) pcGoBtn.Text = ShowPcText(); };
+            pcGoBtn.Text = ShowPcText();
             pcGoBtn.Glyph = Icons.Play;
             pcGoBtn.Font = goBtn.Font;
             pcGoBtn.Location = Ui.P(16, 170);
@@ -2664,7 +2666,7 @@ namespace TVCast
             pcGoBtn.Click += delegate { Toggle(true); };
             pcDivider.AutoSize = false;
             pcDivider.SetBounds(Ui.S(16), Ui.S(222), Ui.S(PW - 32), 1);
-            getHeader.Text = Texts.GetHeader;
+            getHeader.Text = string.Format(Texts.GetHeader, Environment.MachineName.ToUpperInvariant());
             getHeader.Font = headerFont;
             getHeader.Location = Ui.P(16, 234);
             getHeader.AutoSize = true;
@@ -2680,7 +2682,7 @@ namespace TVCast
             recvKeys.Font = new Font("Segoe UI", 8.5f);
             recvKeys.Location = Ui.P(16, 282);
             recvKeys.AutoSize = true; // one line; a fixed height clipped the letters' tails
-            recvBtn.Text = Texts.ReceiveStart;
+            recvBtn.Text = string.Format(Texts.ReceiveStart, Environment.MachineName);
             recvBtn.Glyph = Icons.Play;
             recvBtn.Font = goBtn.Font;
             recvBtn.Location = Ui.P(16, PH - 16 - 38);
@@ -3153,6 +3155,14 @@ namespace TVCast
         }
 
         /// <summary>this PC as a receiver on / off (Receiver.cs)</summary>
+        /// <summary>the send button names both PCs, so it is clear which screen goes where</summary>
+        string ShowPcText()
+        {
+            string other = Caster.NameOf(pcBox.Text);
+            if (other == null) other = pcBox.Text.Trim();
+            return other.Length == 0 ? Texts.ShowPcNone : string.Format(Texts.ShowPc, Environment.MachineName, other);
+        }
+
         void ToggleReceive()
         {
             if (receiver != null) { StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
@@ -3170,7 +3180,7 @@ namespace TVCast
             if (receiver != null) receiver.Dispose();
             receiver = null;
             recvCode.Text = "";
-            recvBtn.Text = Texts.ReceiveStart;
+            recvBtn.Text = string.Format(Texts.ReceiveStart, Environment.MachineName);
             StyleButtons();
         }
 
@@ -3237,7 +3247,7 @@ namespace TVCast
             web = null;
             goBtn.Text = Texts.Show;
             ipadBtn.Text = Texts.ShowIpad;
-            pcGoBtn.Text = Texts.ShowPc;
+            pcGoBtn.Text = ShowPcText();
             castToPc = false;
             StyleButtons();
             ipadMode = "";
