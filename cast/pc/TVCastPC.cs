@@ -2095,31 +2095,31 @@ namespace TVCast
             NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
             ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
-            ReceiveHint = lt ? "Pirmame spausk „Laukti ryšio“, antrame pasirink pirmąjį ir spausk „Rodyti šį ekraną“."
-                             : "On the first press “Wait for a connection”, on the second pick the first and press “Show this screen”.";
+            ReceiveHint = lt ? "Antrame spausk „Laukti ryšio“, pirmame – „Rodyti šį ekraną“."
+                             : "On the second press “Wait for a connection”, on the first “Show this screen”.";
             PcPageTitle = lt ? "Iš kompiuterio į kompiuterį" : "From PC to PC";
             ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
             ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
-            ReceiveWaiting = lt ? "Laukiama ryšio\nAntrame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti šį ekraną“."
-                                : "Waiting for a connection\nIn CastLink on the second PC pick “{0}” and press “Show this screen”.";
+            ReceiveWaiting = lt ? "Laukiama ryšio\nPirmame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti šį ekraną“."
+                                : "Waiting for a connection\nIn CastLink on the first PC pick “{0}” and press “Show this screen”.";
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
-            ReceiveAddress = lt ? "Antrame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the second PC pick “{0}”.";
+            ReceiveAddress = lt ? "Pirmame kompiuteryje CastLink pasirink „{0}“." : "In CastLink on the first PC pick “{0}”.";
             ReceiveKeys = lt ? "Pelė ir klaviatūra valdo kitą kompiuterį (jei jame leista). Ctrl+Alt+Enter – langas."
                              : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
-            SendHeader = lt ? "Antras kompiuteris" : "Second PC";
-            GetHeader = lt ? "Pirmas kompiuteris" : "First PC";
+            SendHeader = lt ? "Pirmas kompiuteris" : "First PC";
+            GetHeader = lt ? "Antras kompiuteris" : "Second PC";
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
             TvSearching = lt ? "Ieškoma… Atidaryk CastLink telefone ar televizoriuje." : "Looking… Open CastLink on the phone or TV.";
             TypeAddress = lt ? "Įvesti pavadinimą ar adresą ranka" : "Type a name or address by hand";
             OwnPointer = lt ? "Sava pelė" : "Own pointer";
             OwnPointerTip = lt ? "Šio kompiuterio pelė nejudina kito kompiuterio žymeklio: jis pasiskolinamas tik spustelėjimui ir grįžta atgal. Taip abu gali naudoti pelę vienu metu."
                               : "This PC's mouse does not move the other PC's pointer: it is borrowed only for a click and put back, so both can use a mouse at once.";
-            PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
-            SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
-            GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
+            PcSearching = lt ? "Ieškoma… Antrame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the second PC press “Wait for a connection”.";
+            SendSub = lt ? "Bendrina savo ekraną" : "Shares its screen";
+            GetSub = lt ? "Rodo pirmojo ekraną" : "Shows the first one's screen";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
             PcSound = lt ? "Leisti garsą" : "Allow sound";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
@@ -2741,13 +2741,13 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
-            // PC to PC: two cards side by side, left = the first PC (you sit at it, it receives),
-            // right = the second PC (its screen is shown on the first)
+            // PC to PC: two cards side by side, left = the first PC (it shares its screen),
+            // right = the second PC (it shows the first one's screen)
             const int CW = (PW - 32 - 12) / 2, CY = 76, CH = PH - CY - 16, CI = CW - 28;
             Font headerFont = new Font("Segoe UI Semibold", 12.5f), dirFont = new Font("Segoe UI", 9f);
-            sendCard.Location = Ui.P(16 + CW + 12, CY);
+            sendCard.Location = Ui.P(16, CY);
             sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
-            getCard.Location = Ui.P(16, CY);
+            getCard.Location = Ui.P(16 + CW + 12, CY);
             getCard.Size = sendCard.Size;
             sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
@@ -2783,10 +2783,10 @@ namespace TVCast
             pcGoBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
             pcGoBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
             pcGoBtn.Click += delegate { Toggle(true); };
-            GlyphTile sendTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
+            GlyphTile sendTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
             sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
             sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
-            GlyphTile getTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
+            GlyphTile getTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
             getTile.GlyphFont = sendTile.GlyphFont;
             getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
             sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcList, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
