@@ -27,6 +27,13 @@ struct Texts {
     var width: String { lt ? "Plotis" : "Width" }
     var height: String { lt ? "Aukštis" : "Height" }
     var retina: String { lt ? "Retina: ryškus, stambus tekstas (daugiau vietos – Ekrano nustatymuose)" : "Retina: sharp, large text (more room in Display settings)" }
+    // sharing with a Windows PC (the same words as CastLink.exe)
+    var shareStart: String { lt ? "Bendrinti ekraną" : "Share screen" }
+    var shareStop: String { lt ? "Nebebendrinti" : "Stop sharing" }
+    var shareOff: String { lt ? "Ekranas nebebendrinamas" : "Screen no longer shared" }
+    var shareHint: String { lt ? "Windows kompiuteris su CastLink (puslapis „Šis kompiuteris“) gali pasirinkti šį Mac ir jį rodyti bei valdyti." : "A Windows PC with CastLink (the “This PC” page) can pick this Mac, show it and control it." }
+    var sharePortBusy: String { lt ? "Prievadas 47802 užimtas: gal CastLink jau atidarytas kitame lange?" : "Port 47802 is busy: is CastLink already open in another window?" }
+    func shareWaiting(_ name: String) -> String { lt ? "Ekranas bendrinamas · laukiama kompiuterio. Jame CastLink pasirink „\(name)“ ir spausk „Rodyti“." : "Screen shared · waiting for the PC. In CastLink there pick “\(name)” and press “Show”." }
     var displaySettings: String { lt ? "Ekrano nustatymai" : "Display settings" }
     var appliesNext: String { lt ? "Pakeitimai galioja kitą kartą paspaudus „Rodyti“." : "Changes apply the next time you press “Show”." }
     var virtualHow: String {

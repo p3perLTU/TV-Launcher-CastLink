@@ -14,6 +14,11 @@
 //                                          PC's pointer goes there and, when the last button is
 //                                          let go, back to where the PC's user had it
 //   9 WHEELAT dy i16, dx i16, x u16, y u16 the same for the wheel
+//  10 KEYRAW  vk u8, down u8, extended u8  any key, pressed or let go: shortcuts too (Ctrl, Alt,
+//                                          Win). Only from a PC receiver (Receiver.cs), which
+//                                          catches the whole keyboard while its picture is in front
+//  11 MOVETO  x u16, y u16                 the pointer goes there for real (a PC receiver's mouse)
+//  12 WHEELHERE dy i16, dx i16             the wheel where the pointer is now
 
 using System;
 using System.Runtime.InteropServices;
@@ -21,7 +26,7 @@ using System.Text;
 
 namespace TVCast
 {
-    enum InputKind { Move = 1, Button = 2, Wheel = 3, Text = 4, Key = 5, MoveBy = 6, ButtonHere = 7, ClickAt = 8, WheelAt = 9 }
+    enum InputKind { Move = 1, Button = 2, Wheel = 3, Text = 4, Key = 5, MoveBy = 6, ButtonHere = 7, ClickAt = 8, WheelAt = 9, KeyRaw = 10, MoveTo = 11, WheelHere = 12 }
 
     sealed class InputEvent
     {
@@ -32,6 +37,7 @@ namespace TVCast
         public int WheelY, WheelX;
         public string Text;
         public byte Key;
+        public bool Extended;       // KeyRaw: an extended key (right Ctrl/Alt, arrows, Win, ...)
     }
 
     static class RemoteInput
@@ -82,6 +88,16 @@ namespace TVCast
                 case 9:
                     if (n != 9) return null;
                     return new InputEvent { Kind = InputKind.WheelAt, WheelY = Clamp((short)U16(m, 1)), WheelX = Clamp((short)U16(m, 3)), X = U16(m, 5), Y = U16(m, 7) };
+                case 10:
+                    // vk 0 and 0xFF are not keys; the caller lets this through only from a PC receiver
+                    if (n != 4 || m[1] == 0 || m[1] == 0xFF || m[2] > 1 || m[3] > 1) return null;
+                    return new InputEvent { Kind = InputKind.KeyRaw, Key = m[1], Down = m[2] == 1, Extended = m[3] == 1 };
+                case 11:
+                    if (n != 5) return null;
+                    return new InputEvent { Kind = InputKind.MoveTo, X = U16(m, 1), Y = U16(m, 3) };
+                case 12:
+                    if (n != 5) return null;
+                    return new InputEvent { Kind = InputKind.WheelHere, WheelY = Clamp((short)U16(m, 1)), WheelX = Clamp((short)U16(m, 3)) };
             }
             return null;
         }
@@ -165,6 +181,18 @@ namespace TVCast
                 Send(Mouse(b == 0 ? LEFTUP : b == 1 ? RIGHTUP : MIDDLEUP, 0, 0, 0));
             }
             PutBack(); // a TV drag cut off: the PC's user gets the pointer back
+            ReleaseKeys();
+        }
+
+        static readonly System.Collections.Generic.HashSet<byte> heldKeys = new System.Collections.Generic.HashSet<byte>();
+
+        /// <summary>keys a PC receiver pressed and did not let go (the cast ended, the network
+        /// dropped): let them go, or Ctrl / Alt / Win would stay down on this PC</summary>
+        public static void ReleaseKeys()
+        {
+            byte[] keys;
+            lock (heldKeys) { keys = new byte[heldKeys.Count]; heldKeys.CopyTo(keys); heldKeys.Clear(); }
+            foreach (byte k in keys) Send(Key(k, '\0', KEYUP));
         }
 
         /// <summary>Replays one message on the screen being shared (see Where).</summary>
@@ -244,6 +272,20 @@ namespace TVCast
                 case InputKind.Text:
                     if (!ActiveWindowOnShownScreen()) { Dropped++; break; }
                     foreach (char c in e.Text) Send(Key(0, c, UNICODE), Key(0, c, UNICODE | KEYUP));
+                    break;
+                case InputKind.KeyRaw:
+                    // the whole keyboard of a PC that shows this one (shortcuts included); keys
+                    // still held when the cast ends are let go by ReleaseKeys
+                    lock (heldKeys) { if (e.Down) heldKeys.Add(e.Key); else heldKeys.Remove(e.Key); }
+                    Send(Key(e.Key, '\0', (e.Extended ? EXTENDED : 0) | (e.Down ? 0 : KEYUP)));
+                    break;
+                case InputKind.MoveTo:
+                    p = Where(e, out at);
+                    Send(Mouse(MOVE | at, p[0], p[1], 0));
+                    break;
+                case InputKind.WheelHere:
+                    if (e.WheelY != 0) Send(Mouse(WHEEL, 0, 0, e.WheelY));
+                    if (e.WheelX != 0) Send(Mouse(HWHEEL, 0, 0, e.WheelX));
                     break;
                 case InputKind.Key:
                     if (!ActiveWindowOnShownScreen()) { Dropped++; break; }

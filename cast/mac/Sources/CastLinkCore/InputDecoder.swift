@@ -11,8 +11,12 @@
 //   7 BUTTONHERE button u8, down u8
 //   8 CLICKAT button u8, down u8, x u16, y u16
 //   9 WHEELAT dy i16, dx i16, x u16, y u16
+//  10 KEYRAW  vk u8, down u8, extended u8  any Windows key, pressed or let go (shortcuts too);
+//                                          the caller takes it only from a PC receiver
+//  11 MOVETO  x u16, y u16                 the pointer goes there for real (a PC receiver's mouse)
+//  12 WHEELHERE dy i16, dx i16             the wheel where the pointer is now
 
-public enum InputKind: Int { case move = 1, button, wheel, text, key, moveBy, buttonHere, clickAt, wheelAt }
+public enum InputKind: Int { case move = 1, button, wheel, text, key, moveBy, buttonHere, clickAt, wheelAt, keyRaw, moveTo, wheelHere }
 
 public struct InputEvent: Equatable {
     public var kind: InputKind
@@ -22,6 +26,7 @@ public struct InputEvent: Equatable {
     public var wheelY = 0, wheelX = 0
     public var text = ""
     public var key: UInt8 = 0
+    public var extended = false      // KEYRAW: an extended key (right Ctrl / Alt, arrows, Win, ...)
 
     public init(kind: InputKind) { self.kind = kind }
 }
@@ -68,6 +73,16 @@ public enum InputDecoder {
             if n != 9 { return nil }
             var e = InputEvent(kind: .wheelAt); e.wheelY = clamp(i16(m, 1)); e.wheelX = clamp(i16(m, 3)); e.x = u16(m, 5); e.y = u16(m, 7)
             return e
+        case 10:
+            // vk 0 and 0xFF are not keys
+            if n != 4 || m[1] == 0 || m[1] == 0xFF || m[2] > 1 || m[3] > 1 { return nil }
+            var e = InputEvent(kind: .keyRaw); e.key = m[1]; e.down = m[2] == 1; e.extended = m[3] == 1; return e
+        case 11:
+            if n != 5 { return nil }
+            var e = InputEvent(kind: .moveTo); e.x = u16(m, 1); e.y = u16(m, 3); return e
+        case 12:
+            if n != 5 { return nil }
+            var e = InputEvent(kind: .wheelHere); e.wheelY = clamp(i16(m, 1)); e.wheelX = clamp(i16(m, 3)); return e
         default:
             return nil
         }

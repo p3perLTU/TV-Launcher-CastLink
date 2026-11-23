@@ -608,6 +608,7 @@ namespace TVCast.Tests
             Equal("Žalias phone", Discovery.NameReply(pkt, pkt.Length), "UTF-8 name");
             True(Discovery.NameReply(new byte[] { Proto.NAME }, 1) == null, "empty");
             True(Discovery.NameReply(new byte[] { Proto.PING, 65 }, 2) == null, "another packet");
+            Equal("MSI", Discovery.NameReply(new byte[] { Proto.PCNAME, 77, 83, 73 }, 4), "a PC receiver's answer reads the same");
         }
 
         static void TestUsbNetworkAskedUntilLimited()
@@ -684,6 +685,97 @@ namespace TVCast.Tests
             Equal(2, MainForm.ParseGpuPreference("SwapEffectUpgradeEnable=1;GpuPreference=2;"), "high performance among other values");
             Equal(0, MainForm.ParseGpuPreference(null), "not set");
             Equal(0, MainForm.ParseGpuPreference("GpuPreference="), "broken value");
+        }
+
+        // ---- this PC as a receiver (Receiver.cs) ----
+
+        static byte[] Chunk(int frame, int chunk, int count, bool key, params byte[] payload)
+        {
+            byte[] p = new byte[Proto.VIDEO_HEADER + payload.Length];
+            Proto.PutVideoHeader(p, key, frame, chunk, count, 1000 + frame);
+            Buffer.BlockCopy(payload, 0, p, Proto.VIDEO_HEADER, payload.Length);
+            return p;
+        }
+
+        static void TestReceiverPutsChunksTogether()
+        {
+            Assembler a = new Assembler(new byte[] { 9 });
+            byte[] c1 = Chunk(1, 1, 2, true, 3, 4), c0 = Chunk(1, 0, 2, true, new byte[Proto.MAX_PAYLOAD]);
+            True(a.Accept(c1, c1.Length) == null, "half a frame: nothing yet");
+            Assembler.Frame f = a.Accept(c0, c0.Length);
+            True(f != null && f.Key, "chunks in any order make the keyframe");
+            Equal(Proto.MAX_PAYLOAD + 2 + 1, f.Data.Length, "both payloads plus the suffix");
+            Equal(9, (int)f.Data[f.Data.Length - 1], "suffix at the end");
+            Equal(1001L, f.PtsUs, "the frame's pts");
+        }
+
+        static void TestReceiverWaitsForAKeyframeAfterALoss()
+        {
+            Assembler a = new Assembler(new byte[0]);
+            byte[] k = Chunk(1, 0, 1, true, 1);
+            True(a.Accept(k, k.Length) != null && !a.WantsKey, "keyframe 1");
+            byte[] p3 = Chunk(3, 0, 1, false, 3); // frame 2 never came
+            True(a.Accept(p3, p3.Length) == null, "a P-frame after a gap is garbage: dropped");
+            True(a.WantsKey && a.Lost == 1, "asks for a keyframe and counts the loss");
+            byte[] p4 = Chunk(4, 0, 1, false, 4);
+            True(a.Accept(p4, p4.Length) == null, "still waiting for a keyframe");
+            byte[] k5 = Chunk(5, 0, 1, true, 5);
+            True(a.Accept(k5, k5.Length) != null && !a.WantsKey, "a keyframe starts the picture again");
+            byte[] old = Chunk(2, 0, 1, false, 2);
+            True(a.Accept(old, old.Length) == null, "a late chunk of an older frame is ignored");
+        }
+
+        static void TestReceiverRefusesBrokenChunks()
+        {
+            Assembler a = new Assembler(new byte[0]);
+            byte[] bad = Chunk(1, 2, 2, true, 1); // chunk index past the count
+            True(a.Accept(bad, bad.Length) == null, "chunk >= count");
+            byte[] zero = Chunk(1, 0, 0, true, 1);
+            True(a.Accept(zero, zero.Length) == null, "count 0");
+            True(a.Accept(new byte[5], 5) == null, "shorter than the header");
+        }
+
+        static void TestReceiverHelloOkMatchesJava()
+        {
+            byte[] n = new byte[SecureLink.NONCE], e = new byte[SecureLink.POINT], s = new byte[SecureLink.POINT], echo = new byte[SecureLink.NONCE];
+            for (int i = 0; i < n.Length; i++) { n[i] = (byte)(0xA0 + i); echo[i] = (byte)(1 + i); }
+            e[0] = s[0] = 4;
+            byte[] b = SecureLink.MakeHelloOk(n, e, s, echo, true, "PC-1");
+            Equal(SecureLink.HELLO_OK_FIXED + 4, b.Length, "fixed part + the name");
+            Equal((int)SecureLink.HELLO_OK, (int)b[0], "type");
+            Equal(1, (int)b[SecureLink.HELLO_OK_FIXED - 1], "knowsYou byte before the name");
+            SecureLink.Hello h = SecureLink.Parse(b, b.Length);
+            True(h != null && h.KnowsYou && h.Name == "PC-1" && SecureLink.Same(h.Echo, echo) && SecureLink.Same(h.Nonce, n),
+                "the caster reads it back field by field");
+        }
+
+        static void TestPcReceiverGetsTheScreensFrameRate()
+        {
+            Equal(144, Caster.PcFps(120, 144), "a 144 Hz shared screen sends 144, even to a 120 Hz receiver");
+            Equal(200, Caster.PcFps(240, 200), "never more than the shared screen shows");
+            Equal(240, Caster.PcFps(360, 360), "at most 240");
+            Equal(60, Caster.PcFps(144, 60), "a 60 Hz shared screen: 60");
+            Equal(120, Caster.PcFps(120, 0), "shared screen's rate unknown: the receiver's");
+            Equal(20000000, Caster.PcBitrate(60, 1920, 1080), "1080p 60: 20 Mb/s");
+            Equal(60000000, Caster.PcBitrate(180, 1920, 1080), "1080p 180: three times as much");
+            Equal(80000000, Caster.PcBitrate(240, 2560, 1440), "never above 80 Mb/s");
+        }
+
+        static void TestFindAsksTheWholeHomeNetwork()
+        {
+            Equal("192.168.0.255", Discovery.Broadcast(IPAddress.Parse("192.168.0.20"), IPAddress.Parse("255.255.255.0")).ToString(), "a /24");
+            Equal("10.0.255.255", Discovery.Broadcast(IPAddress.Parse("10.0.0.5"), IPAddress.Parse("255.255.0.0")).ToString(), "a /16");
+            True(Discovery.Broadcast(IPAddress.Parse("10.0.0.5"), IPAddress.Parse("255.255.255.255")) == null, "a /32 has no broadcast");
+        }
+
+        static void TestSharingPcsTalkInShortPackets()
+        {
+            byte[] p = ShareHost.Packet(ShareHost.NAME, "Ąžuolas-PC");
+            Equal(31, (int)p[0], "name type");
+            Equal("Ąžuolas-PC", ShareHost.Text(p, p.Length), "the name survives UTF-8");
+            True(ShareHost.Text(new byte[] { ShareHost.PULL }, 1) == null, "an empty ask has no name");
+            Equal(256, ShareHost.Packet(ShareHost.PULL, new string('x', 400)).Length, "names are cut to 255 bytes");
+            True(ShareHost.WHO != SecureLink.HELLO && ShareHost.PULL != Proto.PCNAME, "own types, on their own port");
         }
 
         static void TestGpuPreferenceFollowsTheScreensCard()
@@ -1028,6 +1120,30 @@ namespace TVCast.Tests
             e = RemoteInput.Decode(new byte[] { 9, 0xFF, 0x88, 0, 0, 0, 10, 0, 20 }, 9);
             True(e.Kind == InputKind.WheelAt && e.WheelY == -120 && e.X == 10 && e.Y == 20, "a wheel notch at the TV's pointer");
             Equal(null, RemoteInput.Decode(new byte[] { 8, 0, 1, 0, 0 }, 5), "short click-at");
+        }
+
+        static void TestPcReceiverControlMessages()
+        {
+            InputEvent k = RemoteInput.Decode(new byte[] { 10, 0x5B, 1, 1 }, 4); // left Win, down, extended
+            True(k != null && k.Kind == InputKind.KeyRaw && k.Key == 0x5B && k.Down && k.Extended, "a raw key: Win down");
+            True(RemoteInput.Decode(new byte[] { 10, 0, 1, 0 }, 4) == null, "vk 0 is no key");
+            True(RemoteInput.Decode(new byte[] { 10, 0x41, 2, 0 }, 4) == null, "down must be 0 or 1");
+            True(RemoteInput.Decode(new byte[] { 10, 0x41, 1 }, 3) == null, "too short");
+            InputEvent m = RemoteInput.Decode(new byte[] { 11, 0x80, 0x00, 0xFF, 0xFF }, 5);
+            True(m != null && m.Kind == InputKind.MoveTo && m.X == 0x8000 && m.Y == 0xFFFF, "move to the middle, bottom");
+            InputEvent w = RemoteInput.Decode(new byte[] { 12, 0xFF, 0x88, 0, 0 }, 5); // -120
+            True(w != null && w.Kind == InputKind.WheelHere && w.WheelY == -120, "one notch down where the pointer is");
+        }
+
+        static void TestPcReceiverMapsThePointer()
+        {
+            // a 1920 x 1080 window showing a 1440 x 1080 picture centred (240 px black on each side)
+            int[] a = ViewerForm.ToRemote(240, 0, 240, 0, 1440, 1080);
+            Equal(0, a[0], "left edge of the picture");
+            int[] b = ViewerForm.ToRemote(240 + 1439, 1079, 240, 0, 1440, 1080);
+            True(b[0] == 65535 && b[1] == 65535, "bottom-right corner");
+            int[] c = ViewerForm.ToRemote(10, 500, 240, 0, 1440, 1080);
+            Equal(0, c[0], "on the black bar: clamped to the edge");
         }
 
         static void TestDecodeInputRefusesOthers()

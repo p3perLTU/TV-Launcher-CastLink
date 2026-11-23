@@ -502,7 +502,8 @@ namespace TVCast
                     if (msg[0] == 0x11) { c.SkipToKey = true; RequestKey(); continue; }
                     if (!AllowControl) continue;
                     InputEvent e = RemoteInput.Decode(msg, msg.Length);
-                    if (e != null) RemoteInput.Apply(e);
+                    // the browser gets the safe set only: no raw keys (shortcuts are for a PC receiver)
+                    if (e != null && e.Kind != InputKind.KeyRaw) RemoteInput.Apply(e);
                 }
             }
             finally

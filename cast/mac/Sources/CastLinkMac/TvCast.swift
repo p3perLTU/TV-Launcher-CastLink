@@ -162,6 +162,15 @@ final class TvCast {
     // the picture
     private var vw = 0, vh = 0
     private var recvW = 0, recvH = 0
+    /// a PC receiver's refresh rate (INFO), 0 for a TV or phone
+    private var recvHz = 0
+    /// when the receiver was last heard from (any sealed packet)
+    private var heardAt = TvCast.nowMs()
+
+    /// how long the receiver has been quiet, in ms (a second viewer waits while the first answers)
+    var quietMs: Int64 { lock.lock(); defer { lock.unlock() }; return TvCast.nowMs() - heardAt }
+    /// the receiver is a PC (it said its refresh rate)
+    var toPc: Bool { lock.lock(); defer { lock.unlock() }; return recvHz > 0 }
     private var frameId: Int32 = 0
     private let sendLock = NSLock()
     private var keyWanted = true
@@ -224,8 +233,12 @@ final class TvCast {
         guard let src = source else { return }
         let (maxW, maxH) = Proto.sizeLimit(recvW: recvW, recvH: recvH)
         let (w, h) = Proto.fit(src.width, src.height, maxW: maxW, maxH: maxH)
-        let bitrate = Proto.scaledBitrate(fps > 60 ? 30_000_000 : 20_000_000, w, h)
-        let cap = try ScreenCapture(displayID: src.displayID, width: w, height: h, fps: fps, audio: withAudio, bitrate: bitrate)
+        lock.lock(); let hz = recvHz; lock.unlock()
+        // a PC receiver gets as many frames as the shown screen draws, with bits to match
+        let ownHz = Int(CGDisplayCopyDisplayMode(src.displayID)?.refreshRate ?? 0)
+        let rate = hz > 0 ? Proto.pcFps(receiverHz: hz, ownHz: ownHz) : fps
+        let bitrate = hz > 0 ? Proto.pcBitrate(fps: rate, w, h) : Proto.scaledBitrate(fps > 60 ? 30_000_000 : 20_000_000, w, h)
+        let cap = try ScreenCapture(displayID: src.displayID, width: w, height: h, fps: rate, audio: withAudio, bitrate: bitrate)
         cap.encoder.onFrame = { [weak self] data, key, us, sps, pps in self?.sendFrame(data, key: key, ptsUs: us, sps: sps, pps: pps) }
         cap.onAudio = { [weak self] pcm in self?.sendAudio(pcm) }
         cap.onStopped = { [weak self] e in self?.onStopped?(e.localizedDescription) }
@@ -489,6 +502,7 @@ final class TvCast {
             guard pkt[0] == SecureLink.sealed else { TvCast.inputLog("unsealed packet type \(pkt[0]) len \(n): dropped"); continue }
             guard let sl = l, let inner = sl.open(pkt), !inner.isEmpty else { TvCast.inputLog("sealed packet len \(n) did not open (link \(l == nil ? "none" : "set")): dropped"); continue }
             lastSealedHeard = now
+            lock.lock(); heardAt = now; lock.unlock()
             switch inner[0] {
             case Proto.keyreq:
                 if now - lastKey > 150 { lastKey = now; capture?.requestKey() }
@@ -508,10 +522,20 @@ final class TvCast {
                 }
             case Proto.info where inner.count >= 9:
                 let rw = Int(Proto.getInt(inner, 1)), rh = Int(Proto.getInt(inner, 5))
+                var restart = false
                 if rw >= 320 && rh >= 240 && rw <= 7680 && rh <= 4320 && (rw != recvW || rh != recvH) {
                     lock.lock(); recvW = rw; recvH = rh; lock.unlock()
-                    restartCapture()
+                    restart = true
                 }
+                // a PC receiver adds its screen's refresh rate (TVs and phones do not)
+                let hz = inner.count >= 13 ? Int(Proto.getInt(inner, 9)) : 0
+                if hz >= 24 && hz <= 1000 && hz != recvHz {
+                    lock.lock(); recvHz = hz; lock.unlock()
+                    input?.rawKeysAllowed = true
+                    TvCast.inputLog("PC receiver: \(hz) Hz, its whole keyboard is taken")
+                    restart = true
+                }
+                if restart { restartCapture() }
             case Proto.ping where inner.count >= 9:
                 var pong: [UInt8] = [Proto.pong]
                 pong += inner[1..<9]

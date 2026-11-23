@@ -124,6 +124,22 @@ namespace TVCast
             return b;
         }
 
+        /// <summary>the receiver's answer (this PC as a receiver): same bytes as helloOk in Java</summary>
+        public static byte[] MakeHelloOk(byte[] nonce, byte[] eph, byte[] stat, byte[] echo, bool knowsYou, string name)
+        {
+            byte[] nm = Utf8(name);
+            byte[] b = new byte[HELLO_OK_FIXED + nm.Length];
+            b[0] = HELLO_OK;
+            b[1] = VERSION;
+            Buffer.BlockCopy(nonce, 0, b, 2, NONCE);
+            Buffer.BlockCopy(eph, 0, b, 2 + NONCE, POINT);
+            Buffer.BlockCopy(stat, 0, b, 2 + NONCE + POINT, POINT);
+            Buffer.BlockCopy(echo, 0, b, 2 + NONCE + 2 * POINT, NONCE);
+            b[HELLO_OK_FIXED - 1] = (byte)(knowsYou ? 1 : 0);
+            Buffer.BlockCopy(nm, 0, b, HELLO_OK_FIXED, nm.Length);
+            return b;
+        }
+
         /// <summary>a HELLO or HELLO_OK of this version, else null</summary>
         public static Hello Parse(byte[] b, int n)
         {

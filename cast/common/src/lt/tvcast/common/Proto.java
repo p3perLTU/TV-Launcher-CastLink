@@ -17,11 +17,15 @@ package lt.tvcast.common;
  *   PONG    type | tvNanos long | phoneNanos long                               (phone -> TV)
  *   INPUT   type | token 8 bytes | input message (cast/pc/RemoteInput.cs)       (receiver -> PC)
  *   INFO    type | width int | height int  the receiver's screen, landscape  (receiver -> PC, 2 s)
- *           so the PC sends the picture at that size (a phone: 2340 x 1080, not 1920 x 886)
+ *           so the PC sends the picture at that size (a phone: 2340 x 1080, not 1920 x 886);
+ *           a PC receiver adds | refresh Hz int (13 bytes in all)
  *   WHO     type                                                                (PC -> receiver)
  *   NAME    type | UTF-8 name, the same as its mDNS name                        (receiver -> PC)
  *           Android's mDNS does not answer on USB tethering, so the PC asks the phone on the
- *           cable (the tethering network's gateway) directly
+ *           cable (the tethering network's gateway) directly; the PC also asks every home
+ *           network by broadcast
+ *   PCNAME (18) / PHONENAME (19)  like NAME, from a PC receiver / a phone receiver, so the PC
+ *           window lists them apart and draws the right icon
  *
  * ptsUs is the phone's System.nanoTime() / 1000 at capture, so with the PING/PONG clock
  * offset the TV can show the real capture-to-decoded delay.
@@ -43,6 +47,8 @@ public final class Proto {
     public static final byte WHO = 15;
     public static final byte NAME = 16;
     public static final byte INFO = 17;
+    /** a phone receiver's answer to WHO: like NAME, so the PC shows a phone icon */
+    public static final byte PHONENAME = 19;
     public static final int CONFIG_CONTROL = 1;
     public static final int TOKEN_BYTES = 8;
     /** CONFIG with the control flag and the token */

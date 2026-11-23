@@ -33,6 +33,8 @@ namespace TVCast
     {
         public const int PORT = 47800;
         public const byte CONFIG = 1, VIDEO = 2, AUDIO = 3, KEYREQ = 10, BYE = 11, PING = 12, PONG = 13, INPUT = 14, WHO = 15, NAME = 16, INFO = 17;
+        /// <summary>a PC receiver's answer to WHO (Receiver.cs): like NAME, so the window lists PCs apart</summary>
+        public const byte PCNAME = 18, PHONENAME = 19;
         public const int CONFIG_CONTROL = 1, TOKEN_BYTES = 8, CONFIG_LONG = 14 + 1 + TOKEN_BYTES;
         public const int FLAG_KEY = 1;
         public const int VIDEO_HEADER = 1 + 1 + 4 + 2 + 2 + 8;
@@ -409,7 +411,6 @@ namespace TVCast
         readonly IntPtr mapped = Marshal.AllocHGlobal(16);
         public int W, H, OriginX, OriginY;
         public string ScreenDevice = "";
-        public byte[] Bgra;
         public long LastPresentMicros;
         public string AdapterName = "";
 
@@ -455,8 +456,12 @@ namespace TVCast
 
                 int level;
                 // driver type UNKNOWN because the adapter is given; BGRA support
-                Com.Check(Native.D3D11CreateDevice(pickAdapter, 0, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7,
-                    out device, out level, out ctx), "D3D11CreateDevice");
+                int made = Native.D3D11CreateDevice(pickAdapter, 0, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out level, out ctx);
+                // a screen owned by an adapter that cannot render (seen on another PC: a virtual
+                // display driver's own adapter, 0x8876017C): use Windows' default GPU instead;
+                // DuplicateOutput below then says whether that GPU may copy this screen
+                if (made < 0) made = Native.D3D11CreateDevice(IntPtr.Zero, 1 /*HARDWARE*/, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out level, out ctx);
+                Com.Check(made, "D3D11CreateDevice (" + AdapterName + ")");
                 // The process is per-monitor DPI aware (so the pointer lands right on a scaled
                 // screen), and for such processes IDXGIOutput1::DuplicateOutput fails with
                 // DXGI_ERROR_UNSUPPORTED on a scaled (e.g. 125 %) screen: IDXGIOutput5::
@@ -490,7 +495,6 @@ namespace TVCast
 
                 Marshal.Copy(new int[] { W, H, 1, 1, 87, 1, 0, 3 /*STAGING*/, 0, 0x20000 /*CPU READ*/, 0 }, 0, desc, 11);
                 Com.Check(Com.F<D_CreateTex>(device, 5)(device, desc, IntPtr.Zero, out staging), "CreateTexture2D");
-                Bgra = new byte[W * H * 4];
             }
             finally
             {
@@ -513,15 +517,12 @@ namespace TVCast
                 long present = Marshal.ReadInt64(frameInfo, 0);
                 int accumulated = Marshal.ReadInt32(frameInfo, 16);
                 if (accumulated == 0) return 0; // only the pointer moved
+                // only a copy on the GPU here: a 144 Hz screen gives 144 pictures a second and
+                // reading each one into memory (8 MB at 1080p) held the sender at ~86 fps; the
+                // CPU reads the picture only when it is sent (ConvertTo)
                 IntPtr tex = Com.QI(res, IID_Texture2D);
                 Com.F<D_Copy>(ctx, 47)(ctx, staging, tex); // CopyResource
                 Com.Release(ref tex);
-                Com.Check(Com.F<D_Map>(ctx, 14)(ctx, staging, 0, 1 /*READ*/, 0, mapped), "Map");
-                IntPtr p = Marshal.ReadIntPtr(mapped, 0);
-                int pitch = Marshal.ReadInt32(mapped, IntPtr.Size);
-                int row = W * 4;
-                for (int y = 0; y < H; y++) Marshal.Copy(p + y * pitch, Bgra, y * row, row);
-                Com.F<D_Unmap>(ctx, 15)(ctx, staging, 0);
                 LastPresentMicros = present != 0 ? Clock.QpcToMicros(present) : Clock.Micros();
                 return 1;
             }
@@ -530,6 +531,20 @@ namespace TVCast
                 Com.Release(ref res);
                 Com.F<D_Self>(dup, 14)(dup); // ReleaseFrame
             }
+        }
+
+        /// <summary>the last picture as NV12 (dw x dh) with the pointer drawn in, read straight
+        /// from the staging texture</summary>
+        public void ConvertTo(IntPtr dst, int dw, int dh, Pointer p)
+        {
+            Com.Check(Com.F<D_Map>(ctx, 14)(ctx, staging, 0, 1 /*READ*/, 0, mapped), "Map");
+            try
+            {
+                IntPtr src = Marshal.ReadIntPtr(mapped, 0);
+                int pitch = Marshal.ReadInt32(mapped, IntPtr.Size);
+                Nv12.Convert(src, pitch, W, H, dst, dw, dh, p);
+            }
+            finally { Com.F<D_Unmap>(ctx, 15)(ctx, staging, 0); }
         }
 
         public void Dispose()
@@ -635,13 +650,27 @@ namespace TVCast
     {
         /// <summary>BGRA (sw x sh) -> NV12 (dw x dh, nearest-neighbour scaling), BT.709 limited
         /// range, with the pointer blended in.</summary>
-        public static unsafe void Convert(byte[] src, int sw, int sh, byte[] dst, int dw, int dh, Pointer p)
+        public static void Convert(byte[] src, int sw, int sh, byte[] dst, int dw, int dh, Pointer p)
+        {
+            GCHandle hd = GCHandle.Alloc(dst, GCHandleType.Pinned);
+            try { Convert(src, sw, sh, hd.AddrOfPinnedObject(), dw, dh, p); }
+            finally { hd.Free(); }
+        }
+
+        /// <summary>the same into memory the encoder owns (its input buffer, filled ahead of time)</summary>
+        public static void Convert(byte[] src, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
+        {
+            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned);
+            try { Convert(hs.AddrOfPinnedObject(), sw * 4, sw, sh, pd, dw, dh, p); }
+            finally { hs.Free(); }
+        }
+
+        /// <summary>the core: BGRA rows of "pitch" bytes (a mapped texture) -> NV12</summary>
+        public static unsafe void Convert(IntPtr ps, int pitch, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
         {
             int[] xs = new int[dw], ys = new int[dh];
             for (int x = 0; x < dw; x++) xs[x] = (int)((long)x * sw / dw);
             for (int y = 0; y < dh; y++) ys[y] = (int)((long)y * sh / dh);
-            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned), hd = GCHandle.Alloc(dst, GCHandleType.Pinned);
-            IntPtr ps = hs.AddrOfPinnedObject(), pd = hd.AddrOfPinnedObject();
             bool cur = p != null && p.Visible && p.Px != null;
             int cx = cur ? p.X : 0, cy = cur ? p.Y : 0, cw = cur ? p.W : 0, ch = cur ? p.H : 0;
             byte[] cpx = cur ? p.Px : null;
@@ -659,7 +688,7 @@ namespace TVCast
                         {
                             int x = bx * 2 + (k & 1), y = by * 2 + (k >> 1);
                             int sx = xs[x], sy = ys[y];
-                            byte* q = s + ((long)sy * sw + sx) * 4;
+                            byte* q = s + (long)sy * pitch + (long)sx * 4;
                             int b = q[0], g = q[1], r = q[2];
                             if (cur && sx >= cx && sy >= cy && sx < cx + cw && sy < cy + ch)
                             {
@@ -678,11 +707,7 @@ namespace TVCast
                     }
                 });
             }
-            finally
-            {
-                hs.Free();
-                hd.Free();
-            }
+            finally { }
         }
     }
 
@@ -732,9 +757,15 @@ namespace TVCast
         uint outSize;
         readonly int w, h, fps;
         int credits;
+        Thread pumpThread;
+        volatile bool pumping;
+        volatile Exception pumpError;
+        FrameHandler pumpTo;
         byte[] csd;
         public readonly string Name;
         public readonly bool Hardware;
+        /// <summary>tests / measuring: the encoder whose name contains this goes first (null: NVIDIA)</summary>
+        public static string Prefer;
 
         /// <summary>Tries the hardware encoders (NVIDIA first), then the Windows software one.
         /// On a hybrid laptop only the encoder of the GPU this process runs on may start (the
@@ -858,7 +889,7 @@ namespace TVCast
                     Native.CoTaskMemFree(s);
                 }
                 KeyValuePair<IntPtr, string> e = new KeyValuePair<IntPtr, string>(a, nm);
-                if (nm.IndexOf("NVIDIA", StringComparison.OrdinalIgnoreCase) >= 0) list.Insert(0, e);
+                if (nm.IndexOf(Prefer ?? "NVIDIA", StringComparison.OrdinalIgnoreCase) >= 0) list.Insert(0, e);
                 else list.Add(e);
             }
             Native.CoTaskMemFree(acts);
@@ -900,52 +931,107 @@ namespace TVCast
         }
 
         /// <summary>An async (hardware) encoder takes a frame only after asking for one.</summary>
-        public bool CanTakeInput { get { return !async || credits > 0; } }
+        public bool CanTakeInput { get { return !async || Volatile.Read(ref credits) > 0; } }
 
         public void Input(byte[] nv12, long ptsMicros, bool forceKey)
         {
-            IntPtr buf, sample;
-            Com.Check(Native.MFCreateMemoryBuffer((uint)nv12.Length, out buf), "MFCreateMemoryBuffer");
-            IntPtr p; uint max, cur;
-            Com.F<D_Lock>(buf, 3)(buf, out p, out max, out cur);
+            IntPtr buf, p;
+            NewFrame(nv12.Length, out buf, out p);
             Marshal.Copy(nv12, 0, p, nv12.Length);
-            Com.F<D_Self>(buf, 4)(buf);
-            Com.F<D_SetLen>(buf, 6)(buf, (uint)nv12.Length);
+            IntPtr sample = FinishFrame(buf, nv12.Length, ptsMicros);
+            InputSample(ref sample, forceKey);
+        }
+
+        /// <summary>an input buffer, locked: the picture is written straight into it (no copy)</summary>
+        public void NewFrame(int len, out IntPtr buf, out IntPtr data)
+        {
+            Com.Check(Native.MFCreateMemoryBuffer((uint)len, out buf), "MFCreateMemoryBuffer");
+            uint max, cur;
+            Com.F<D_Lock>(buf, 3)(buf, out data, out max, out cur);
+        }
+
+        /// <summary>unlocks the buffer and wraps it in a sample ready for InputSample</summary>
+        public IntPtr FinishFrame(IntPtr buf, int len, long ptsMicros)
+        {
+            IntPtr sample;
+            Com.F<D_Self>(buf, 4)(buf); // Unlock
+            Com.F<D_SetLen>(buf, 6)(buf, (uint)len);
             Native.MFCreateSample(out sample);
             Com.F<D_Buf>(sample, 42)(sample, buf);
+            Com.Release(ref buf);
             Com.F<D_SetI64>(sample, 36)(sample, ptsMicros * 10);
             Com.F<D_SetI64>(sample, 38)(sample, 10000000L / fps);
+            return sample;
+        }
+
+        /// <summary>hands a prepared sample to the encoder and releases it</summary>
+        public void InputSample(ref IntPtr sample, bool forceKey)
+        {
             if (forceKey) SetCodec(API_ForceKey, 19, 1);
             int hr = Com.F<D_PIn>(mft, 24)(mft, 0, sample, 0);
             Com.Release(ref sample);
-            Com.Release(ref buf);
             Com.Check(hr, "ProcessInput");
-            if (async) credits--;
+            if (async) Interlocked.Decrement(ref credits);
         }
 
         public delegate void FrameHandler(byte[] data, int len, bool key, long ptsMicros);
 
-        /// <summary>Hands every finished frame to onFrame. Never blocks.</summary>
+        /// <summary>Hands every finished frame to onFrame. Never blocks. With a background
+        /// output thread running it only reports that thread's error.</summary>
         public void Pump(FrameHandler onFrame)
         {
+            if (pumpThread != null)
+            {
+                Exception e = pumpError;
+                if (e != null) throw new Exception(e.Message, e);
+                return;
+            }
             if (!async)
             {
                 while (Drain(onFrame) >= 0) { }
                 return;
             }
-            while (true)
+            while (PumpOnce(onFrame)) { }
+        }
+
+        /// <summary>one encoder event; false when there was none</summary>
+        bool PumpOnce(FrameHandler onFrame)
+        {
+            IntPtr ev;
+            int hr = Com.F<D_GetEvent>(events, 3)(events, 1 /*NO_WAIT*/, out ev);
+            if (hr == MF_E_NO_EVENTS) return false;
+            Com.Check(hr, "GetEvent");
+            uint type;
+            Com.F<D_GetEvType>(ev, 33)(ev, out type);
+            Com.Release(ref ev);
+            if (type == 601) Interlocked.Increment(ref credits); // METransformNeedInput
+            else if (type == 602) Drain(onFrame); // METransformHaveOutput
+            else if (type == 1) throw new Exception(Texts.EncoderError);
+            return true;
+        }
+
+        /// <summary>Takes the finished frames on a thread of their own: with the AMD encoder
+        /// ProcessOutput waited ~4.5 ms a frame for the GPU, time the capture loop could not
+        /// prepare the next frame in (held a 144 Hz screen at ~95 fps). Async (hardware)
+        /// encoders only; onFrame then runs on that thread.</summary>
+        public void PumpInBackground(FrameHandler onFrame)
+        {
+            if (!async || pumpThread != null) return;
+            pumpTo = onFrame;
+            pumping = true;
+            pumpThread = new Thread(PumpLoop) { IsBackground = true, Name = "encoder output", Priority = ThreadPriority.AboveNormal };
+            pumpThread.Start();
+        }
+
+        void PumpLoop()
+        {
+            Native.CoInitializeEx(IntPtr.Zero, 0); // MTA, like the thread that made the encoder
+            try
             {
-                IntPtr ev;
-                int hr = Com.F<D_GetEvent>(events, 3)(events, 1 /*NO_WAIT*/, out ev);
-                if (hr == MF_E_NO_EVENTS) return;
-                Com.Check(hr, "GetEvent");
-                uint type;
-                Com.F<D_GetEvType>(ev, 33)(ev, out type);
-                Com.Release(ref ev);
-                if (type == 601) credits++; // METransformNeedInput
-                else if (type == 602) Drain(onFrame); // METransformHaveOutput
-                else if (type == 1) throw new Exception(Texts.EncoderError);
+                while (pumping)
+                    if (!PumpOnce(pumpTo)) Thread.Sleep(1);
             }
+            catch (Exception e) { pumpError = e; }
         }
 
         byte[] outBuf = new byte[1 << 20];
@@ -1022,6 +1108,8 @@ namespace TVCast
 
         public void Dispose()
         {
+            pumping = false;
+            if (pumpThread != null) pumpThread.Join(1000);
             if (mft != IntPtr.Zero)
             {
                 Com.F<D_Msg>(mft, 23)(mft, 0x10000001, IntPtr.Zero); // END_OF_STREAM
@@ -1109,7 +1197,7 @@ namespace TVCast
         public volatile string EncoderName = "";
         public long Frames, Bytes;
         // diagnostics: encoder latency (input -> output, same pts) and NV12 conversion time, summed
-        public long EncNs, EncN, ConvNs, ConvN;
+        public long EncNs, EncN, ConvNs, ConvN, WaitNs, InNs, Pictures, SendNs; // log: where a frame's time goes
         public volatile string FirstKeyHex = "";
         readonly Dictionary<long, long> inputAt = new Dictionary<long, long>();
 
@@ -1137,6 +1225,8 @@ namespace TVCast
         public volatile string RouteNote = "-";
         public long Heard; public volatile string RecvError = "-"; // packets from the receiver, last error (log) // the last search of RouteLoop (for the log)
         long lastHeard;      // Clock.Ms() of the last packet from the receiver
+        /// <summary>ms since the receiver last answered (a viewer still there keeps its picture)</summary>
+        public long QuietMs { get { return Clock.Ms() - Interlocked.Read(ref lastHeard); } }
         IPAddress moveTo;    // set by RouteLoop, applied by ControlLoop (which owns the socket)
 
         /// <summary>Keeps a phone on the best link: when it goes quiet for 3 s (it pings twice a
@@ -1184,6 +1274,24 @@ namespace TVCast
 
         /// <summary>the receiver's screen (INFO), 0 until an INFO came (older receivers send none)</summary>
         public volatile int RecvW, RecvH;
+        /// <summary>a PC receiver's refresh rate (INFO), 0 for a TV or phone</summary>
+        public volatile int RecvHz;
+
+        /// <summary>frames a second to a PC receiver: as many as the shared screen shows (a 144 Hz
+        /// screen sends 144, even to a 120 Hz receiver, which then shows the newest), 30..240
+        /// (unit-tested)</summary>
+        internal static int PcFps(int receiverHz, int ownHz)
+        {
+            return Math.Max(30, Math.Min(240, ownHz > 0 ? ownHz : receiverHz));
+        }
+
+        /// <summary>bits a second to a PC receiver: 20 Mb/s per 60 frames of 1080p, more pixels a
+        /// little more, at most 80 Mb/s (unit-tested)</summary>
+        internal static int PcBitrate(int fps, int w, int h)
+        {
+            double k = fps / 60.0 * Math.Max(1.0, Math.Min(1.6, (double)w * h / (1920.0 * 1080.0)));
+            return (int)Math.Min(80000000, 20000000 * k);
+        }
         public const int MaxSendW = 2560, MaxSendH = 1600;
 
         /// <summary>the largest picture to send: the receiver's own screen when it said (a phone gets
@@ -1270,6 +1378,7 @@ namespace TVCast
             if (video != null) video.Join(1000);
             if (audio != null) audio.Join(1000);
             if (control != null) control.Join(1000);
+            RemoteInput.ReleaseButtons(); // a PC receiver's held Ctrl / Alt / mouse button must not stay down
             if (sock != null)
             {
                 for (int i = 0; i < 3; i++) SendSealed(new byte[] { Proto.BYE }, 1);
@@ -1308,6 +1417,7 @@ namespace TVCast
         /// <summary>a new handshake: new ephemeral key and nonce (also after the receiver restarted)</summary>
         void NewHello()
         {
+            RemoteInput.ReleaseButtons(); // the receiver went quiet: nothing it pressed stays down
             SecureLink.Session old = link;
             link = null;
             linkReady = false;
@@ -1352,13 +1462,16 @@ namespace TVCast
         void SendFrame(byte[] data, int len, bool key, long pts)
         {
             long t0;
-            if (inputAt.TryGetValue(pts, out t0))
+            lock (inputAt)
             {
-                inputAt.Remove(pts);
-                Interlocked.Add(ref EncNs, Clock.Nanos() - t0);
-                Interlocked.Increment(ref EncN);
+                if (inputAt.TryGetValue(pts, out t0))
+                {
+                    inputAt.Remove(pts);
+                    Interlocked.Add(ref EncNs, Clock.Nanos() - t0);
+                    Interlocked.Increment(ref EncN);
+                }
+                if (inputAt.Count > 100) inputAt.Clear();
             }
-            if (inputAt.Count > 100) inputAt.Clear();
             if (key && FirstKeyHex.Length == 0)
             {
                 StringBuilder sb = new StringBuilder();
@@ -1375,6 +1488,7 @@ namespace TVCast
             int count = Proto.VideoChunks(len);
             if (count < 0) return;
             byte[] pkt = new byte[Proto.VIDEO_HEADER + Proto.MAX_PAYLOAD];
+            long s0 = Clock.Nanos();
             lock (sendLock)
             {
                 int id = frameId++;
@@ -1386,6 +1500,7 @@ namespace TVCast
                     Send(pkt, Proto.VIDEO_HEADER + l);
                 }
             }
+            Interlocked.Add(ref SendNs, Clock.Nanos() - s0);
             Interlocked.Increment(ref Frames);
             Interlocked.Add(ref Bytes, len);
         }
@@ -1412,7 +1527,7 @@ namespace TVCast
         {
             int w = 1280, h = 720;
             byte[] nv12 = new byte[w * h * 3 / 2];
-            int fps = Fps;
+            int fps = web == null && RecvHz > 0 ? PcFps(RecvHz, DisplayHz.Of(null)) : Fps; // like the screen: a PC receiver gets the main screen's rate
             using (Encoder enc = new Encoder(w, h, fps, Bitrate, web != null ? 66 : 100))
             {
                 EncoderName = enc.Name + " (test pattern)";
@@ -1453,10 +1568,13 @@ namespace TVCast
                 int w = (int)(cap.W * s) & ~1, h = (int)(cap.H * s) & ~1;
                 byte[] nv12 = new byte[w * h * 3 / 2];
                 Pointer ptr = new Pointer();
-                int fps = Fps;
-                using (Encoder enc = new Encoder(w, h, fps, web != null ? Bitrate : ScaledBitrate(Bitrate, w, h, Usb), web != null ? 66 : 100))
+                bool toPc = web == null && RecvHz > 0;
+                int fps = toPc ? PcFps(RecvHz, DisplayHz.Of(cap.ScreenDevice)) : Fps;
+                int rate = web != null ? Bitrate : toPc ? PcBitrate(fps, w, h) : ScaledBitrate(Bitrate, w, h, Usb);
+                using (Encoder enc = new Encoder(w, h, fps, rate, web != null ? 66 : 100))
                 {
                     EncoderName = enc.Name + (enc.Hardware ? "" : Texts.Software);
+                    enc.PumpInBackground(SendFrame);
                     vw = w;
                     vh = h;
                     if (web != null) web.SetSize(w, h);
@@ -1464,10 +1582,17 @@ namespace TVCast
                     Status = "";
                     bool dirty = false, have = false;
                     long nextSlot = 0, lastEncode = 0, pts = 0;
+                    // the next frame, converted straight into an encoder buffer while the encoder
+                    // is still busy with the last one: capture + conversion no longer add to each
+                    // frame's time (the AMD encoder went from ~93 to its own ~120 a second)
+                    IntPtr ready = IntPtr.Zero;
+                    long readyPts = 0, readyAt = 0, lead = 3000; // lead: how long preparing a frame takes (us), so it starts that much before its slot
+                    try
+                    {
                     while (on && !restartVideo)
                     {
                         int got = cap.Acquire(2);
-                        if (got == 1) { dirty = true; have = true; pts = cap.LastPresentMicros; }
+                        if (got == 1) { dirty = true; have = true; pts = cap.LastPresentMicros; Interlocked.Increment(ref Pictures); }
                         if (ptr.Update(cap.OriginX, cap.OriginY) && have) { dirty = true; pts = Clock.Micros(); }
                         enc.Pump(SendFrame);
                         long now = Clock.Micros();
@@ -1477,20 +1602,33 @@ namespace TVCast
                         // changed" frames): with 5-6 fps Safari's player ran out of picture and stopped
                         // for up to 10 s, waiting for enough to play.
                         bool webIdle = web != null && have && now - lastEncode > 100000;
-                        if (((dirty && now >= nextSlot) || keyIdle || webIdle) && enc.CanTakeInput)
+                        if (((dirty && now >= nextSlot - lead) || keyIdle || webIdle) && ready == IntPtr.Zero)
                         {
                             long c0 = Clock.Nanos();
-                            Nv12.Convert(cap.Bgra, cap.W, cap.H, nv12, w, h, ptr);
+                            IntPtr buf, data;
+                            enc.NewFrame(nv12.Length, out buf, out data);
+                            try { cap.ConvertTo(data, w, h, ptr); }
+                            catch { Com.F<D_Self>(buf, 4)(buf); Com.Release(ref buf); throw; }
                             long c1 = Clock.Nanos();
                             Interlocked.Add(ref ConvNs, c1 - c0);
                             Interlocked.Increment(ref ConvN);
+                            lead = Math.Min(1000000 / fps, (lead * 7 + (c1 - c0) / 1000 + 1000) / 8); // smoothed, plus 1 ms to spare
                             if (!dirty) pts = Clock.Micros();
-                            bool key = keyWanted;
-                            keyWanted = false;
-                            inputAt[pts] = c1;
-                            enc.Input(nv12, pts, key);
+                            ready = enc.FinishFrame(buf, nv12.Length, pts);
+                            readyPts = pts;
+                            readyAt = c1;
                             dirty = false;
                             lastEncode = now;
+                        }
+                        if (ready != IntPtr.Zero && enc.CanTakeInput)
+                        {
+                            bool key = keyWanted;
+                            keyWanted = false;
+                            lock (inputAt) inputAt[readyPts] = readyAt;
+                            long i0 = Clock.Nanos();
+                            Interlocked.Add(ref WaitNs, i0 - readyAt);
+                            enc.InputSample(ref ready, key);
+                            Interlocked.Add(ref InNs, Clock.Nanos() - i0);
                             // even spacing: running late skips a slot instead of sending two frames
                             // close together (a burst leaves the TV decoder one frame behind for seconds)
                             nextSlot += 1000000 / fps;
@@ -1498,6 +1636,8 @@ namespace TVCast
                             enc.Pump(SendFrame);
                         }
                     }
+                    }
+                    finally { Com.Release(ref ready); }
                 }
             }
         }
@@ -1608,7 +1748,9 @@ namespace TVCast
                     // touches from a phone that shows this screen
                     byte[] m = AllowControl && linkReady ? InputMessage(inb, n, token) : null;
                     InputEvent e = m == null ? null : RemoteInput.Decode(m, m.Length);
-                    if (e != null) RemoteInput.Apply(e);
+                    // raw keys (shortcuts) only from a PC receiver: it reported its refresh rate
+                    // in INFO, a TV or phone never does
+                    if (e != null && (e.Kind != InputKind.KeyRaw || RecvHz > 0)) RemoteInput.Apply(e);
                 }
                 else if (n >= 9 && inb[0] == Proto.INFO)
                 {
@@ -1618,6 +1760,9 @@ namespace TVCast
                         RecvW = w; RecvH = h;
                         restartVideo = true; // the encoder starts again at the receiver's size
                     }
+                    // a PC receiver adds its screen's refresh rate (TVs and phones do not)
+                    int hz = n >= 13 ? Proto.GetInt(inb, 9) : 0;
+                    if (hz >= 24 && hz <= 1000 && hz != RecvHz) { RecvHz = hz; restartVideo = true; }
                 }
                 else if (n >= 9 && inb[0] == Proto.PING)
                 {
@@ -1783,13 +1928,22 @@ namespace TVCast
 
     static class Discovery
     {
+        // addresses that answered as a PC receiver (PCNAME): the window lists those apart from TVs and phones
+        static readonly HashSet<IPAddress> pcs = new HashSet<IPAddress>(), phones = new HashSet<IPAddress>();
+        public static bool IsPhone(IPAddress a) { lock (phones) return a != null && phones.Contains(a); }
+
+        /// <summary>this address answered as a PC receiver</summary>
+        public static bool IsPc(IPAddress a) { lock (pcs) return a != null && pcs.Contains(a); }
+
         public static List<KeyValuePair<string, IPAddress>> Find(int ms)
         {
             List<KeyValuePair<string, IPAddress>> found = new List<KeyValuePair<string, IPAddress>>();
+            List<IPAddress> own = WebCast.UpIPv4(false);
             using (Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
             {
                 s.Bind(new IPEndPoint(IPAddress.Any, 0));
                 s.ReceiveTimeout = 200;
+                s.EnableBroadcast = true; // WHO to the home network for PC receivers
                 MemoryStream q = new MemoryStream();
                 q.Write(new byte[] { 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
                 foreach (string label in new[] { "_tvcast", "_udp", "local" })
@@ -1822,6 +1976,9 @@ namespace TVCast
                     // (the gateway of that network) itself
                     foreach (IPAddress gw in WebCast.UsbGateways())
                         try { s.SendTo(new[] { Proto.WHO }, new IPEndPoint(gw, Proto.PORT)); } catch (SocketException) { }
+                    // a PC receiver (Receiver.cs) answers WHO too: ask the whole home network
+                    foreach (IPAddress bc in LanBroadcasts())
+                        try { s.SendTo(new[] { Proto.WHO }, new IPEndPoint(bc, Proto.PORT)); } catch (SocketException) { }
                 };
                 ask();
                 long end = Clock.Ms() + ms, resend = Clock.Ms() + 400;
@@ -1837,6 +1994,10 @@ namespace TVCast
                     string name = src.Port == Proto.PORT ? NameReply(buf, n) : InstanceName(buf, n);
                     if (name == null) continue;
                     IPAddress ip = src.Address;
+                    bool pc = src.Port == Proto.PORT && buf[0] == Proto.PCNAME;
+                    if (pc && own.Contains(ip)) continue; // this PC's own receiver
+                    if (pc) lock (pcs) pcs.Add(ip);
+                    if (src.Port == Proto.PORT && buf[0] == Proto.PHONENAME) lock (phones) phones.Add(ip);
                     bool dup = false;
                     foreach (KeyValuePair<string, IPAddress> f in found) dup |= f.Value.Equals(ip);
                     if (!dup) found.Add(new KeyValuePair<string, IPAddress>(name, ip));
@@ -1845,10 +2006,40 @@ namespace TVCast
             return found;
         }
 
+        /// <summary>the broadcast address of every home network this PC is on (private IPv4)</summary>
+        internal static List<IPAddress> LanBroadcasts()
+        {
+            List<IPAddress> list = new List<IPAddress>();
+            try
+            {
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    foreach (System.Net.NetworkInformation.UnicastIPAddressInformation u in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (u.Address.AddressFamily != AddressFamily.InterNetwork || u.IPv4Mask == null) continue;
+                        IPAddress bc = Broadcast(u.Address, u.IPv4Mask);
+                        if (bc != null && Proto.IsLanV4(u.Address.GetAddressBytes()) && !list.Contains(bc)) list.Add(bc);
+                    }
+                }
+            }
+            catch (System.Net.NetworkInformation.NetworkInformationException) { }
+            return list;
+        }
+
+        /// <summary>192.168.0.20 / 255.255.255.0 -> 192.168.0.255 (unit-tested); null for a /32</summary>
+        internal static IPAddress Broadcast(IPAddress a, IPAddress mask)
+        {
+            byte[] b = a.GetAddressBytes(), m = mask.GetAddressBytes();
+            if (b.Length != 4 || m.Length != 4 || (m[0] & m[1] & m[2] & m[3]) == 255) return null;
+            for (int i = 0; i < 4; i++) b[i] = (byte)(b[i] | ~m[i]);
+            return new IPAddress(b);
+        }
+
         /// <summary>a receiver's NAME answer to WHO, null if the packet is something else</summary>
         internal static string NameReply(byte[] b, int n)
         {
-            if (n < 2 || b[0] != Proto.NAME) return null;
+            if (n < 2 || (b[0] != Proto.NAME && b[0] != Proto.PCNAME && b[0] != Proto.PHONENAME)) return null;
             string name = Encoding.UTF8.GetString(b, 1, n - 1).Trim();
             return name.Length > 0 ? name : null;
         }
@@ -1924,6 +2115,10 @@ namespace TVCast
         public static string NoScreen, NoOutput1, ScreenFormat, NoEncoder, EncoderError;
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
         public static string WrongGpuAskNvidia, WrongGpuStuck;
+        public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
+            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSound, PcSearching, TvSearching, TypeAddress, OwnPointer, OwnPointerTip,
+            ShareStart, ShareStop, ShareWaiting, ShareOff, SharePortBusy, PickSharer, AdminRestart, AdminAlready;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2011,6 +2206,46 @@ namespace TVCast
             NoOutput1 = lt ? "IDXGIOutput1 nepalaikomas" : "IDXGIOutput1 is not supported";
             ScreenFormat = lt ? "Ekrano formatas {0} nepalaikomas (išjunkite HDR)" : "Screen format {0} is not supported (turn HDR off)";
             NoEncoder = lt ? "Nerastas H.264 koderis" : "No H.264 encoder found";
+            NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
+            ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
+            ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
+            ReceiveHint = lt ? "Pirmame spausk „Bendrinti ekraną“, antrame pasirink pirmąjį ir spausk „Rodyti“."
+                             : "On the first press “Share screen”, on the second pick the first and press “Show”.";
+            PcPageTitle = lt ? "Iš kompiuterio į kompiuterį" : "From PC to PC";
+            ReceiveStart = lt ? "Rodyti" : "Show";
+            ReceiveStop = lt ? "Sustabdyti" : "Stop";
+            ReceiveWaiting = lt ? "Jungiamasi prie {0}\nJei {0} klausia kodo, patvirtink jį ten."
+                                : "Connecting to {0}\nIf {0} asks about a code, confirm it there.";
+            ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
+            ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
+            ReceiveAddress = lt ? "Antrame kompiuteryje pasirink „{0}“ ir spausk „Rodyti“." : "On the second PC pick “{0}” and press “Show”.";
+            ReceiveKeys = lt ? "Pelė ir klaviatūra valdo kitą kompiuterį (jei jame leista). Ctrl+Alt+Enter – langas."
+                             : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
+            ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
+            ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
+            SendHeader = lt ? "Pirmas kompiuteris" : "First PC";
+            GetHeader = lt ? "Antras kompiuteris" : "Second PC";
+            ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
+            TvSearching = lt ? "Ieškoma… Atidaryk CastLink telefone ar televizoriuje." : "Looking… Open CastLink on the phone or TV.";
+            TypeAddress = lt ? "Įvesti pavadinimą ar adresą ranka" : "Type a name or address by hand";
+            OwnPointer = lt ? "Sava pelė" : "Own pointer";
+            OwnPointerTip = lt ? "Šio kompiuterio pelė nejudina kito kompiuterio žymeklio: jis pasiskolinamas tik spustelėjimui ir grįžta atgal. Taip abu gali naudoti pelę vienu metu."
+                              : "This PC's mouse does not move the other PC's pointer: it is borrowed only for a click and put back, so both can use a mouse at once.";
+            PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Bendrinti ekraną“." : "Looking… On the first PC press “Share screen”.";
+            ShareStart = lt ? "Bendrinti ekraną" : "Share screen";
+            ShareStop = lt ? "Nebebendrinti" : "Stop sharing";
+            ShareWaiting = lt ? "Ekranas bendrinamas · laukiama antro kompiuterio\nAntrame kompiuteryje CastLink pasirink „{0}“ ir spausk „Rodyti“."
+                              : "Screen shared · waiting for the second PC\nIn CastLink on the second PC pick “{0}” and press “Show”.";
+            ShareOff = lt ? "Ekranas nebebendrinamas" : "Screen no longer shared";
+            SharePortBusy = lt ? "Prievadas {0} užimtas: gal CastLink jau atidarytas kitame lange?" : "Port {0} is busy: is CastLink already open in another window?";
+            AdminRestart = lt ? "Paleisti iš naujo kaip administratorių: tada antras kompiuteris galės valdyti ir administratoriaus langus (pvz., užduočių tvarkyklę). Windows paklaus leidimo."
+                              : "Restart as administrator: the second PC can then control administrator windows too (e.g. Task Manager). Windows asks first.";
+            AdminAlready = lt ? "CastLink jau veikia kaip administratorius" : "CastLink already runs as administrator";
+            PickSharer = lt ? "Pirma pasirink kompiuterį, kurio ekraną nori matyti" : "First pick the PC whose screen you want to see";
+            SendSub = lt ? "Bendrina savo ekraną" : "Shares its screen";
+            GetSub = lt ? "Rodo pirmojo ekraną" : "Shows the first one's screen";
+            PcControl = lt ? "Leisti valdyti" : "Allow control";
+            PcSound = lt ? "Leisti garsą" : "Allow sound";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2240,7 +2475,8 @@ namespace TVCast
     {
         public const string Phone = "\uE8EA", Globe = "\uE774", Monitor = "\uE7F4", Settings = "\uE713",
             Play = "\uE768", Stop = "\uE71A", Search = "\uE721", Add = "\uE710",
-            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896";
+            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896", Upload = "\uE898",
+            Pc = "\uE977", Edit = "\uE70F", Shield = "\uEA18";
         static string family;
         static readonly Dictionary<float, Font> cache = new Dictionary<float, Font>();
 
@@ -2255,6 +2491,79 @@ namespace TVCast
             Font font;
             if (!cache.TryGetValue(points, out font)) cache[points] = font = new Font(family, points);
             return font;
+        }
+    }
+
+    /// <summary>one found device: icon tile, name and address, highlighted when picked</summary>
+    sealed class DeviceRow : Control
+    {
+        public string Title = "", Sub = "", Glyph = Icons.Monitor;
+        bool selected, hover;
+        public bool Selected { get { return selected; } set { selected = value; Invalidate(); } }
+
+        public DeviceRow()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Page);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            Color fill = selected ? Ui.Mix(Ui.CardBg, Ui.Accent, 0.22f) : hover && Enabled ? Ui.Mix(Ui.CardBg, Ui.Ink, 0.06f) : Ui.CardBg;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), Ui.S(8)))
+            using (SolidBrush b = new SolidBrush(fill))
+            using (Pen pen = new Pen(selected ? Ui.Accent : Ui.Border, selected ? 1.5f : 1f))
+            {
+                g.FillPath(b, p);
+                g.DrawPath(pen, p);
+            }
+            int t = Ui.S(30), x = Ui.S(8), y = (Height - t) / 2;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(x, y, t, t), t * 0.26f))
+            using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
+                new PointF(x, y), new PointF(x + t, y + t), Color.FromArgb(56, 132, 255), Color.FromArgb(124, 77, 255)))
+                g.FillPath(b, p);
+            TextRenderer.DrawText(g, Glyph, Icons.Font(11f), new Rectangle(x, y, t, t), Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            int tx = x + t + Ui.S(10), tw = Width - tx - Ui.S(8);
+            using (Font bold = new Font("Segoe UI Semibold", 9.5f))
+                TextRenderer.DrawText(g, Title, bold, new Rectangle(tx, Ui.S(5), tw, Ui.S(19)), Enabled ? Ui.Ink : Ui.Muted,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            using (Font small = new Font("Segoe UI", 8.5f))
+                TextRenderer.DrawText(g, Sub, small, new Rectangle(tx, Ui.S(24), tw, Ui.S(16)), Ui.Muted,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        }
+    }
+
+    /// <summary>a rounded colour tile with a white icon, the badge of a card's title</summary>
+    sealed class GlyphTile : Control
+    {
+        public string Glyph;
+        public Color From, To;
+        public Font GlyphFont; // null = the icon font
+
+        public GlyphTile()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Page);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Width * 0.26f))
+            using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
+                new PointF(0, 0), new PointF(Width, Height), From, To))
+                g.FillPath(b, p);
+            TextRenderer.DrawText(g, Glyph, GlyphFont ?? Icons.Font(13f), ClientRectangle, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 
@@ -2336,10 +2645,31 @@ namespace TVCast
         // the browser page's own choices (sound and control can differ per way of showing)
         readonly FlatCheck webSoundBox = new FlatCheck(), webControlBox = new FlatCheck();
         // left menu and its four pages; only the selected page is visible
-        Card appPage, webPage, screensPage;
+        Card appPage, webPage, screensPage, recvPage;
+        // this PC as a receiver (Receiver.cs): the page's button, name and code, the picture window
+        readonly FlatButton recvBtn = new FlatButton();
+        readonly Label recvName = new Label(), recvCode = new Label(), recvKeys = new Label();
+        // ... and the top half: send this screen to another PC (PCs found by the search are listed only here)
+        readonly ComboBox pcBox = new ComboBox();
+        readonly Panel pcList = new Panel(), tvList = new Panel();
+        readonly FlatButton typeBtn = new FlatButton();
+        readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton(), adminBtn = new FlatButton();
+        readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck(), ownPointerBox = new FlatCheck();
+        readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
+        readonly Card sendCard = new Card(), getCard = new Card();
+        bool castToPc;
+        PcReceiver receiver;
+        ViewerForm viewer;
+        ShareHost share;          // this PC shares its screen: a viewer may ask it to cast
+        string pulledEntry;       // "name (address)" of the viewer that asked
+        IPAddress pullFrom;       // the sharing PC this one asked for the picture
+        string pullName = "";
+        long lastPullAt;
+        int lastShown;
+        long lastRecvTick;
         Card[] pages;
         NavItem[] nav;
-        Label subtitle, tvLabel, appHint, webHint, screensHint;
+        Label subtitle, tvLabel, appHint, webHint, screensHint, recvHint;
         WebCast web;
         string ipadCode;
         // the status card: the iPad's address and code (iPad mode only), then a dot with the state
@@ -2377,7 +2707,8 @@ namespace TVCast
         // command line, for testing: --tv <ip> --start --log <file> --find --fps N --size WxH --lang en|lt
         //   --ipad (start the iPad mode) --control on|off --port N --no-ask
         readonly string logFile;
-        readonly bool autoStart, findOnly, autoIpad;
+        readonly bool autoStart, findOnly, autoIpad, autoReceive, autoShare;
+        readonly string autoPull; // tests: --pull "Name (ip)" asks that sharing PC for its picture
         readonly string argControl;
         bool argFps;
         int startPage;
@@ -2399,6 +2730,9 @@ namespace TVCast
                 else if (args[i] == "--control" && i + 1 < args.Length) argControl = args[++i];
                 else if (args[i] == "--lang" && i + 1 < args.Length) Texts.Use(args[++i]);
                 else if (args[i] == "--find") findOnly = true;
+                else if (args[i] == "--receive") autoReceive = true; // tests: start as a receiver
+                else if (args[i] == "--share") autoShare = true; // tests: share this screen at start
+                else if (args[i] == "--pull" && i + 1 < args.Length) autoPull = args[++i];
                 else if (args[i] == "--page" && i + 1 < args.Length) startPage = int.Parse(args[++i]); // screenshots
                 else if (args[i] == "--fps" && i + 1 < args.Length) { Caster.FPS = int.Parse(args[++i]); argFps = true; }
                 else if (args[i] == "--size" && i + 1 < args.Length)
@@ -2431,10 +2765,10 @@ namespace TVCast
             PictureBox logo = new PictureBox { Image = AppIcon.Render(Ui.S(36), false), Location = Ui.P(16, 18), Size = new Size(Ui.S(36), Ui.S(36)) };
             Label title = new Label { Text = "CastLink", Font = new Font("Segoe UI Semibold", 14f), Location = Ui.P(60, 20), AutoSize = true };
             subtitle = new Label { Text = Texts.Subtitle, Location = Ui.P(16, 64), Size = new Size(Ui.S(SB - 28), Ui.S(40)), Font = new Font("Segoe UI", 8.5f) };
-            string[] names = { Texts.TvSection, Texts.IpadSection, Texts.ScreensSection };
-            string[] glyphs = { Icons.Phone, Icons.Globe, Icons.Monitor };
-            nav = new NavItem[3];
-            for (int n = 0; n < 3; n++)
+            string[] names = { Texts.TvSection, Texts.IpadSection, Texts.ScreensSection, Texts.ReceiveSection };
+            string[] glyphs = { Icons.Phone, Icons.Globe, Icons.Monitor, Icons.Download };
+            nav = new NavItem[4];
+            for (int n = 0; n < 4; n++)
             {
                 int k = n;
                 nav[n] = new NavItem { Text = names[n], Glyph = glyphs[n], Size = new Size(Ui.S(SB - 24), Ui.S(38)) };
@@ -2445,39 +2779,54 @@ namespace TVCast
             appPage = Page(Texts.TvSection, PX, PW, PH, out appHint, Texts.AppHint);
             webPage = Page(Texts.IpadSection, PX, PW, PH, out webHint, Texts.WebHint);
             screensPage = Page(Texts.ScreensSection, PX, PW, PH, out screensHint, Texts.ScreensHint);
-            pages = new[] { appPage, webPage, screensPage };
+            recvPage = Page(Texts.PcPageTitle, PX, PW, PH, out recvHint, Texts.ReceiveHint);
+            recvHint.Height = Ui.S(22); // one line: which PC sends and which receives
+            pages = new[] { appPage, webPage, screensPage, recvPage };
 
             // CastLink app (Android phone, tablet or TV)
-            tvLabel = new Label { Text = Texts.TvLabel, Location = Ui.P(16, 100), AutoSize = true };
-            tvBox.Location = Ui.P(16, 124);
-            tvBox.Width = Ui.S(PW - 32 - 124);
-            findBtn.Text = Texts.Find;
+            // found phones and TVs as tiles in two columns; the pencil swaps the tiles for a box
+            // to type a name or address by hand
+            tvLabel = new Label { Text = Texts.TvLabel, Location = Ui.P(16, 100), AutoSize = true, Visible = false };
+            tvBox.Location = Ui.P(16, 104);
+            tvBox.Width = Ui.S(PW - 32);
+            tvBox.Visible = false;
+            tvList.SetBounds(Ui.S(16), Ui.S(100), Ui.S(PW - 32), Ui.S(100));
+            tvList.AutoScroll = true;
+            tvBox.SelectedIndexChanged += delegate { ShowTvRows(); };
+            findBtn.Text = "";
             findBtn.Glyph = Icons.Search;
-            findBtn.Location = Ui.P(PW - 16 - 116, 122);
-            findBtn.Size = new Size(Ui.S(116), Ui.S(32));
+            findBtn.Location = Ui.P(16, PH - 16 - 42);
+            findBtn.Size = new Size(Ui.S(42), Ui.S(42));
             findBtn.Click += delegate { Search(); };
+            new ToolTip().SetToolTip(findBtn, Texts.Find);
+            typeBtn.Text = "";
+            typeBtn.Glyph = Icons.Edit;
+            typeBtn.Location = Ui.P(16 + 50, PH - 16 - 42);
+            typeBtn.Size = findBtn.Size;
+            typeBtn.Click += delegate { TypeByHand(!tvBox.Visible); };
+            new ToolTip().SetToolTip(typeBtn, Texts.TypeAddress);
             fpsBox.Text = Texts.Fps120;
-            fpsBox.Location = Ui.P(16, 168);
+            fpsBox.Location = Ui.P(16, 208);
             fpsBox.Glyph = Icons.Speed;
             goBtn.Text = Texts.Show;
             goBtn.Glyph = Icons.Play;
             goBtn.Font = new Font("Segoe UI Semibold", 10.5f);
-            goBtn.Location = Ui.P(16, PH - 16 - 42);
-            goBtn.Size = new Size(Ui.S(PW - 32), Ui.S(42));
+            goBtn.Location = Ui.P(16 + 100, PH - 16 - 42);
+            goBtn.Size = new Size(Ui.S(PW - 32 - 100), Ui.S(42));
             goBtn.Click += delegate { Toggle(); };
             soundBox.Text = webSoundBox.Text = Texts.Sound;
             controlBox.Text = webControlBox.Text = Texts.AllowControl;
             soundBox.Glyph = webSoundBox.Glyph = Icons.Volume;
             controlBox.Glyph = webControlBox.Glyph = Icons.Touch;
             soundBox.Checked = controlBox.Checked = webSoundBox.Checked = webControlBox.Checked = true;
-            soundBox.Location = Ui.P(16, 204);
-            controlBox.Location = Ui.P(16, 240);
+            soundBox.Location = Ui.P(16, 236);
+            controlBox.Location = Ui.P(16, 264);
             // the browser page: at the bottom, under the address and the code
             webSoundBox.Location = Ui.P(16, PH - 16 - 42 - 80);
             webControlBox.Location = Ui.P(16, PH - 16 - 42 - 44);
             controlBox.CheckedChanged += delegate { if (caster != null && web == null) caster.AllowControl = controlBox.Checked; };
             webControlBox.CheckedChanged += delegate { if (web != null) web.AllowControl = webControlBox.Checked; };
-            appPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Phone, tvLabel), tvLabel, tvBox, findBtn, fpsBox, soundBox, controlBox, goBtn });
+            appPage.Controls.AddRange(new Control[] { tvLabel, tvBox, tvList, findBtn, typeBtn, fpsBox, soundBox, controlBox, goBtn });
 
             // browser (Mac, another PC, iPad): address and code while it runs
             urlCaption.Text = Texts.OpenSafari;
@@ -2491,8 +2840,8 @@ namespace TVCast
             ipadBtn.Text = Texts.ShowIpad;
             ipadBtn.Glyph = Icons.Play;
             ipadBtn.Font = goBtn.Font;
-            ipadBtn.Location = goBtn.Location;
-            ipadBtn.Size = goBtn.Size;
+            ipadBtn.Location = Ui.P(16, PH - 16 - 42);
+            ipadBtn.Size = new Size(Ui.S(PW - 32), Ui.S(42));
             ipadBtn.Click += delegate { ToggleIpad(); };
             foreach (Label l in new[] { urlIcon, codeIcon }) { l.Font = Icons.Font(10f); l.AutoSize = false; l.TextAlign = ContentAlignment.MiddleCenter; captionIcons.Add(l); }
             urlIcon.Text = Icons.Link;
@@ -2524,6 +2873,97 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
+            // PC to PC: two cards side by side, left = the first PC (it shares its screen),
+            // right = the second PC (it shows the first one's screen)
+            const int CW = (PW - 32 - 12) / 2, CY = 76, CH = PH - CY - 16, CI = CW - 28;
+            Font headerFont = new Font("Segoe UI Semibold", 12.5f), dirFont = new Font("Segoe UI", 9f);
+            sendCard.Location = Ui.P(16, CY);
+            sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
+            getCard.Location = Ui.P(16 + CW + 12, CY);
+            getCard.Size = sendCard.Size;
+            sendHeader.Text = Texts.SendHeader;
+            sendHeader.Font = headerFont;
+            sendHeader.Location = Ui.P(62, 12);
+            sendHeader.AutoSize = true;
+            sendDir.Font = dirFont;
+            sendDir.AutoEllipsis = true;
+            sendDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
+            // found PCs as tiles (icon, name, address) like in the phone app; the hidden box
+            // keeps the picked entry for the cast code
+            pcBox.Visible = false;
+            pcList.SetBounds(Ui.S(14), Ui.S(64), Ui.S(CI), Ui.S(80));
+            pcList.AutoScroll = true;
+            pcBox.SelectedIndexChanged += delegate { ShowPcRows(); };
+            pcFindBtn.Text = "";
+            pcFindBtn.Glyph = Icons.Search;
+            pcFindBtn.Location = Ui.P(14, CH - 14 - 38);
+            pcFindBtn.Size = new Size(Ui.S(38), Ui.S(38));
+            pcFindBtn.Click += delegate { Search(); };
+            new ToolTip().SetToolTip(pcFindBtn, Texts.Find);
+            pcSoundBox.Text = Texts.PcSound;
+            pcSoundBox.Glyph = Icons.Volume;
+            pcSoundBox.Location = Ui.P(14, 164);
+            pcControlBox.Text = Texts.PcControl;
+            pcControlBox.Glyph = Icons.Touch;
+            pcControlBox.Location = Ui.P(14, 190);
+            pcSoundBox.Checked = pcControlBox.Checked = true;
+            pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
+            pcBox.TextChanged += delegate { ShowDirections(); };
+            pcGoBtn.Text = Texts.ShareStart;
+            pcGoBtn.Glyph = Icons.Play;
+            pcGoBtn.Font = goBtn.Font;
+            pcGoBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
+            pcGoBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
+            pcGoBtn.Click += delegate { ToggleShare(); };
+            // administrator windows (Task Manager, anything "run as administrator") take no input
+            // from a normal app: CastLink restarted with those rights can control them too
+            adminBtn.Text = "";
+            adminBtn.Glyph = Icons.Shield;
+            adminBtn.Location = Ui.P(14, CH - 14 - 38);
+            adminBtn.Size = new Size(Ui.S(38), Ui.S(38));
+            adminBtn.Click += delegate { RestartAsAdmin(); };
+            adminBtn.Enabled = !IsAdmin();
+            new ToolTip().SetToolTip(adminBtn, IsAdmin() ? Texts.AdminAlready : Texts.AdminRestart);
+            GlyphTile sendTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
+            sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
+            sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
+            GlyphTile getTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
+            getTile.GlyphFont = sendTile.GlyphFont;
+            getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
+            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, recvName, pcSoundBox, pcControlBox, adminBtn, pcGoBtn });
+            getHeader.Text = Texts.GetHeader;
+            getHeader.Font = headerFont;
+            getHeader.Location = Ui.P(62, 12);
+            getHeader.AutoSize = true;
+            getDir.Font = dirFont;
+            getDir.AutoEllipsis = true;
+            getDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
+            recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
+            recvName.SetBounds(Ui.S(14), Ui.S(68), Ui.S(CI), Ui.S(40));
+            recvCode.SetBounds(Ui.S(14), Ui.S(146), Ui.S(CI), Ui.S(38));
+            recvCode.TextAlign = ContentAlignment.MiddleLeft;
+            recvCode.Font = new Font("Segoe UI Semibold", 20f);
+            recvKeys.Text = Texts.ReceiveKeys;
+            recvKeys.Font = new Font("Segoe UI", 8.5f);
+            recvKeys.Visible = false; // now the tooltip of the Show button
+            ownPointerBox.Text = Texts.OwnPointer;
+            ownPointerBox.Glyph = Icons.Touch;
+            ownPointerBox.Location = Ui.P(14, 188);
+            ownPointerBox.Checked = true;
+            ownPointerBox.CheckedChanged += delegate { ViewerForm.OwnPointer = ownPointerBox.Checked; SaveAll(); };
+            new ToolTip().SetToolTip(ownPointerBox, Texts.OwnPointerTip);
+            recvBtn.Text = Texts.ReceiveStart;
+            recvBtn.Glyph = Icons.Play;
+            recvBtn.Font = goBtn.Font;
+            recvBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
+            recvBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
+            recvBtn.Click += delegate { ToggleView(); };
+            new ToolTip().SetToolTip(recvBtn, Texts.ReceiveKeys);
+            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, pcBox, pcList, recvCode, recvKeys, ownPointerBox, pcFindBtn, recvBtn });
+            recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
+            ShowPcRows();
+            ShowDirections();
+
 
             // status card: a dot with the state line, grey details below
             statusCard.SetBounds(Ui.S(PX), Ui.S(M + PH + 12), Ui.S(PW), Ui.S(72));
@@ -2541,7 +2981,7 @@ namespace TVCast
             Controls.Add(statusCard);
             formWidth = Ui.S(W);
             ClientSize = new Size(formWidth, Ui.S(H));
-            ShowPage(Math.Max(0, Math.Min(2, startPage)));
+            ShowPage(Math.Max(0, Math.Min(3, startPage)));
             LayoutStatus();
             ApplyTheme();
             // follow Settings -> Personalization -> Colors while the app is open
@@ -2557,7 +2997,8 @@ namespace TVCast
             {
                 string found = FindSettings(LocalSettings, AppDataSettings, OldSettings);
                 string[] lines = found != null ? File.ReadAllLines(found) : new string[0];
-                if (lines.Length > 0) tvBox.Text = lines[0];
+                // line 1 (the device) is not read back: the field starts empty every time, like the
+                // phone app (the user picks from a fresh search, no old addresses)
                 if (lines.Length > 1) soundBox.Checked = lines[1] != "0";
                 if (lines.Length > 2) fpsBox.Checked = lines[2] == "120";
                 if (lines.Length > 3) controlBox.Checked = lines[3] != "0";
@@ -2565,6 +3006,7 @@ namespace TVCast
                 if (lines.Length > 5) savedScreen = lines[5];
                 webSoundBox.Checked = lines.Length > 6 ? lines[6] != "0" : soundBox.Checked;
                 webControlBox.Checked = lines.Length > 7 ? lines[7] != "0" : controlBox.Checked;
+                if (lines.Length > 8) ownPointerBox.Checked = lines[8] != "0";
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -2581,8 +3023,8 @@ namespace TVCast
             IntPtr clickHook = WindowMover.WatchRealClicks(); // ... and one the PC's own mouse picks comes to it
             FormClosed += delegate { WindowMover.Unwatch(fgHook); WindowMover.UnwatchClicks(clickHook); };
             timer.Start();
-            Shown += delegate { if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(); };
-            FormClosing += delegate { MoveWindowsHome(); StopCast(); };
+            Shown += delegate { if (autoShare) { ShowPage(3); ToggleShare(); } else if (autoPull != null) { ShowPage(3); pcBox.Items.Add(autoPull); pcBox.SelectedIndex = 0; ToggleView(); } else if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(findOnly); };
+            FormClosing += delegate { StopShare(); MoveWindowsHome(); StopCast(); StopReceive(); };
         }
 
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
@@ -2591,14 +3033,24 @@ namespace TVCast
         /// <summary>a running cast's button is red ("Stop"), the others use the accent colour</summary>
         void StyleButtons()
         {
+            foreach (Control c in pcList.Controls) c.Enabled = !(caster != null && castToPc); // no other pick while casting to a PC
+            foreach (Control c in tvList.Controls) c.Enabled = !(caster != null && !castToPc);
+            typeBtn.Enabled = caster == null;
             findBtn.Style(Ui.Subtle, Ui.Ink);
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
-            bool tv = caster != null && web == null, ipad = web != null;
+            pcFindBtn.Style(Ui.Subtle, Ui.Ink);
+            adminBtn.Style(Ui.Subtle, Ui.Ink);
+            bool tv = caster != null && web == null && !castToPc, pc = share != null || (caster != null && web == null && castToPc), ipad = web != null, rx = receiver != null;
             goBtn.Glyph = tv ? Icons.Stop : Icons.Play;
             ipadBtn.Glyph = ipad ? Icons.Stop : Icons.Play;
-            goBtn.Style(tv ? Ui.Danger : Ui.Accent, tv ? (Ui.Dark ? Color.Black : Color.White) : Ui.AccentText);
-            ipadBtn.Style(ipad ? Ui.Danger : Ui.Accent, ipad ? (Ui.Dark ? Color.Black : Color.White) : Ui.AccentText);
+            pcGoBtn.Glyph = pc ? Icons.Stop : Icons.Play;
+            recvBtn.Glyph = rx ? Icons.Stop : Icons.Play;
+            Color stopInk = Ui.Dark ? Color.Black : Color.White;
+            goBtn.Style(tv ? Ui.Danger : Ui.Accent, tv ? stopInk : Ui.AccentText);
+            ipadBtn.Style(ipad ? Ui.Danger : Ui.Accent, ipad ? stopInk : Ui.AccentText);
+            pcGoBtn.Style(pc ? Ui.Danger : Ui.Accent, pc ? stopInk : Ui.AccentText);
+            recvBtn.Style(rx ? Ui.Danger : Ui.Accent, rx ? stopInk : Ui.AccentText);
         }
 
         /// <summary>colours of every control from Ui (after Ui.Load), dark title bar and combo box</summary>
@@ -2610,11 +3062,18 @@ namespace TVCast
             statusCard.BackColor = Ui.CardBg;
             foreach (Control c in new Control[] { subtitle, tvLabel, fpsBox, urlCaption, codeCaption, printLabel, detailLabel,
                 appHint, webHint, screensHint, screenLabel, extendSteps }) c.ForeColor = Ui.Muted;
-            foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle }) c.ForeColor = Ui.Ink;
+            foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle,
+                pcSoundBox, pcControlBox, recvName, recvCode, sendHeader, getHeader }) c.ForeColor = Ui.Ink;
+            foreach (Control c in new Control[] { sendDir, getDir, recvKeys }) c.ForeColor = Ui.Muted;
+            sendCard.BackColor = getCard.BackColor = pcList.BackColor = Ui.Field;
+            tvList.BackColor = Ui.CardBg;
+            typeBtn.Style(Ui.Subtle, Ui.Ink);
+            ShowPcRows();
+            ShowTvRows();
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
-            tvBox.BackColor = screenBox.BackColor = Ui.Field;
-            tvBox.ForeColor = screenBox.ForeColor = Ui.Ink;
+            tvBox.BackColor = screenBox.BackColor = pcBox.BackColor = Ui.Field;
+            tvBox.ForeColor = screenBox.ForeColor = pcBox.ForeColor = Ui.Ink;
             StyleButtons();
             if (IsHandleCreated) ThemeWindow();
             foreach (Control c in Controls) c.Invalidate(true);
@@ -2628,7 +3087,7 @@ namespace TVCast
             try { if (DwmSetWindowAttribute(Handle, 20, ref on, 4) != 0) DwmSetWindowAttribute(Handle, 19, ref on, 4); }
             catch (DllNotFoundException) { }
             // the combo box's arrow and list follow the "DarkMode_CFD" theme
-            try { SetWindowTheme(tvBox.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); SetWindowTheme(screenBox.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); }
+            try { foreach (ComboBox cb in new[] { tvBox, screenBox, pcBox }) SetWindowTheme(cb.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); }
             catch (DllNotFoundException) { }
         }
 
@@ -2665,6 +3124,8 @@ namespace TVCast
         {
             for (int i = 0; i < pages.Length; i++) { pages[i].Visible = i == n; nav[i].Selected = i == n; }
             if (n == 2) FillScreens();
+            if (caster == null && receiver == null && !searching
+                && ((n == 3 && pcBox.Items.Count == 0) || (n == 0 && tvBox.Items.Count == 0 && !tvBox.Visible))) Search(false, true);
         }
 
         /// <summary>first line = the state next to the dot, the rest = grey details</summary>
@@ -2707,19 +3168,128 @@ namespace TVCast
             printLabel.SetBounds(px, y + Ui.S(22), webPage.Width - px - Ui.S(16), Ui.S(36));
         }
 
-        void Search()
+        /// <param name="pick">true when the user pressed Find: the first device found is picked;
+        /// the search when the app opens only fills the list, the field stays empty</param>
+        bool searching;
+        int pcSearchWait;
+
+        /// <summary>draws the found PCs as tiles; a click picks one, a double click shows this screen there</summary>
+        void ShowPcRows()
         {
-            findBtn.Enabled = false;
-            Say(Texts.Searching, Ui.Waiting);
+            ShowRows(pcBox, pcList, 1, Texts.PcSearching, caster != null && castToPc, delegate { Toggle(true); });
+        }
+
+        /// <summary>the same for phones and TVs on the CastLink app page, two per row</summary>
+        void ShowTvRows()
+        {
+            ShowRows(tvBox, tvList, 2, Texts.TvSearching, caster != null && !castToPc, delegate { Toggle(); });
+        }
+
+        /// <summary>swaps the tiles for the old box to type a name or address</summary>
+        void TypeByHand(bool on)
+        {
+            tvBox.Visible = on;
+            tvList.Visible = !on;
+            if (on) { tvBox.Focus(); tvBox.SelectAll(); }
+            else ShowTvRows();
+        }
+
+        static string GlyphFor(string name, bool pc)
+        {
+            if (pc) return Icons.Pc;
+            int open = name.LastIndexOf(" (", StringComparison.Ordinal);
+            IPAddress ip;
+            if (open > 0 && IPAddress.TryParse(name.Substring(open + 2).TrimEnd(')'), out ip) && Discovery.IsPhone(ip)) return Icons.Phone;
+            string n = name.ToUpperInvariant();
+            return n.StartsWith("SM-") || n.Contains("PHONE") || n.Contains("PIXEL") || n.Contains("TELEFON") || n.Contains("USB") ? Icons.Phone : Icons.Monitor;
+        }
+
+        void ShowRows(ComboBox box, Panel list, int columns, string emptyText, bool locked, MethodInvoker start)
+        {
+            list.SuspendLayout();
+            Control[] old = new Control[list.Controls.Count];
+            list.Controls.CopyTo(old, 0);
+            foreach (Control c in old) c.Dispose();
+            if (box.Items.Count == 0)
+            {
+                Label empty = new Label { Text = emptyText, ForeColor = Ui.Muted, AutoSize = false };
+                empty.SetBounds(0, Ui.S(6), list.Width, Ui.S(60));
+                list.Controls.Add(empty);
+            }
+            int rows = (box.Items.Count + columns - 1) / columns;
+            int inner = list.Width - (rows * Ui.S(50) > list.Height ? SystemInformation.VerticalScrollBarWidth : 0);
+            int gap = Ui.S(8), w = (inner - gap * (columns - 1)) / columns;
+            for (int i = 0; i < box.Items.Count; i++)
+            {
+                string entry = box.Items[i].ToString();
+                string name = Caster.NameOf(entry) ?? entry;
+                int open = entry.LastIndexOf(" (", StringComparison.Ordinal);
+                DeviceRow row = new DeviceRow
+                {
+                    Title = name,
+                    Sub = open > 0 ? entry.Substring(open + 2).TrimEnd(')') : "",
+                    Glyph = GlyphFor(entry, box == pcBox),
+                    Selected = i == box.SelectedIndex,
+                    Enabled = !locked
+                };
+                row.SetBounds((i % columns) * (w + gap), (i / columns) * Ui.S(50), w, Ui.S(44));
+                int index = i;
+                row.Click += delegate { if (box.SelectedIndex != index) box.SelectedIndex = index; };
+                row.DoubleClick += delegate { if (caster == null && receiver == null) { box.SelectedIndex = index; start(); } };
+                list.Controls.Add(row);
+            }
+            list.ResumeLayout();
+        }
+
+        void AutoFindPcs()
+        {
+            bool empty = recvPage.Visible ? pcBox.Items.Count == 0 : appPage.Visible && tvBox.Items.Count == 0 && !tvBox.Visible;
+            if (caster != null || receiver != null || searching || !empty) { pcSearchWait = 0; return; }
+            if (++pcSearchWait < 3) return;
+            pcSearchWait = 0;
+            Search(false, true);
+        }
+
+        /// <summary>quiet = a background look: the buttons and the status line stay as they are
+        /// unless something new turns up</summary>
+        void Search(bool pick = true, bool quiet = false)
+        {
+            searching = true;
+            if (!quiet)
+            {
+                findBtn.Enabled = pcFindBtn.Enabled = false;
+                Say(Texts.Searching, Ui.Waiting);
+            }
             ThreadPool.QueueUserWorkItem(delegate
             {
                 List<KeyValuePair<string, IPAddress>> found = Discovery.Find(1500);
+                List<KeyValuePair<string, IPAddress>> sharing = ShareHost.Find(700);
                 BeginInvoke((MethodInvoker)delegate
                 {
-                    findBtn.Enabled = true;
+                    searching = false;
+                    if (quiet && found.Count == 0 && sharing.Count == 0) return;
+                    if (caster == null) findBtn.Enabled = pcFindBtn.Enabled = true;
+                    // PCs go to the "This PC" page, TVs and phones to the CastLink app page
+                    string prevPc = pcBox.Text, prevTv = tvBox.Text;
                     tvBox.Items.Clear();
-                    foreach (KeyValuePair<string, IPAddress> f in found) tvBox.Items.Add(f.Key + " (" + f.Value + ")");
-                    if (found.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
+                    pcBox.Items.Clear();
+                    foreach (KeyValuePair<string, IPAddress> f in found)
+                        if (!Discovery.IsPc(f.Value)) tvBox.Items.Add(f.Key + " (" + f.Value + ")");
+                    // PCs that share their screen now, for the second PC to pick
+                    foreach (KeyValuePair<string, IPAddress> f in sharing) pcBox.Items.Add(f.Key + " (" + f.Value + ")");
+                    if (tvBox.Items.Count > 0 && caster == null && !tvBox.Visible)
+                    {
+                        int keepTv = tvBox.Items.IndexOf(prevTv);
+                        tvBox.SelectedIndex = keepTv >= 0 ? keepTv : 0;
+                    }
+                    // a PC that was found just now is picked by itself (the one picked before, if still there)
+                    if (pcBox.Items.Count > 0 && !(caster != null && castToPc))
+                    {
+                        int keep = pcBox.Items.IndexOf(prevPc);
+                        pcBox.SelectedIndex = keep >= 0 ? keep : 0;
+                    }
+                    ShowPcRows();
+                    ShowTvRows();
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
@@ -2888,6 +3458,7 @@ namespace TVCast
             string[] args = Environment.GetCommandLineArgs();
             StringBuilder a = new StringBuilder();
             for (int i = 1; i < args.Length; i++) a.Append(" \"").Append(args[i].Replace("\"", "")).Append('"');
+            if (share != null) a.Append(" --share"); // sharing goes on: the second PC asks again by itself
             Process.Start(Application.ExecutablePath, a.ToString());
             Close();
         }
@@ -2970,6 +3541,190 @@ namespace TVCast
             catch (Exception e) { Say(e.Message, Ui.Danger); }
         }
 
+        /// <summary>this PC as a receiver on / off (Receiver.cs)</summary>
+        /// <summary>each card names both ends: "this PC -> picked PC" and "other PC -> this PC"</summary>
+        void ShowDirections()
+        {
+            sendDir.Text = Texts.SendSub;
+            getDir.Text = Texts.GetSub;
+        }
+
+        static bool IsAdmin()
+        {
+            try
+            {
+                using (System.Security.Principal.WindowsIdentity id = System.Security.Principal.WindowsIdentity.GetCurrent())
+                    return new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>starts CastLink again with administrator rights (Windows asks first) and goes
+        /// on sharing; the second PC asks again by itself and gets the picture back</summary>
+        void RestartAsAdmin()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            StringBuilder a = new StringBuilder();
+            for (int i = 1; i < args.Length; i++)
+                if (args[i] != "--share" && args[i] != "--start" && args[i] != "--ipad") a.Append(" \"").Append(args[i].Replace("\"", "")).Append('"');
+            if (share != null) a.Append(" --share");
+            a.Append(" --page 3");
+            try
+            {
+                Process.Start(new ProcessStartInfo(Application.ExecutablePath, a.ToString()) { UseShellExecute = true, Verb = "runas" });
+            }
+            catch (System.ComponentModel.Win32Exception) { return; } // "No" in the Windows question: stay as is
+            SaveAll();
+            Close();
+        }
+
+        /// <summary>the first PC: share this screen; a second PC that picks it gets the picture</summary>
+        void ToggleShare()
+        {
+            if (share != null)
+            {
+                StopShare();
+                Say(Texts.ShareOff, Ui.Idle);
+                return;
+            }
+            if (caster != null) return; // already showing on a phone or TV
+            share = new ShareHost();
+            if (share.Error != null) { Say(share.Error, Ui.Danger); share = null; return; }
+            share.Pulled = (ip, name) => BeginInvoke((MethodInvoker)delegate { OnPulled(ip, name); });
+            pcGoBtn.Text = Texts.ShareStop;
+            StyleButtons();
+            Say(string.Format(Texts.ShareWaiting, Environment.MachineName), Ui.Waiting);
+        }
+
+        void StopShare()
+        {
+            if (share == null) return;
+            share.Dispose();
+            share = null;
+            if (caster != null && castToPc) { MoveWindowsHome(); StopCast(); }
+            pulledEntry = null;
+            pcGoBtn.Text = Texts.ShareStart;
+            StyleButtons();
+        }
+
+        /// <summary>a second PC picked this one: cast to it (the pairing code is asked as usual)</summary>
+        void OnPulled(IPAddress ip, string name)
+        {
+            if (share == null) return;
+            if (caster != null)
+            {
+                if (!castToPc) return; // busy with a phone or TV
+                IPAddress now = ParseTv(pulledEntry);
+                if (ip.Equals(now)) return; // already casting to it
+                // another viewer asks while the current one still answers: it waits, so two
+                // viewers do not take the picture from each other every second
+                if (caster.QuietMs < 4000) return;
+                StopCast();
+            }
+            pulledEntry = name + " (" + ip + ")";
+            Toggle(true);
+            if (caster != null) pcGoBtn.Text = Texts.ShareStop;
+        }
+
+        /// <summary>the second PC: wait for the picture and ask the picked PC to send it</summary>
+        void ToggleView()
+        {
+            if (receiver != null) { pullFrom = null; StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
+            IPAddress ip = ParseTv(pcBox.Text);
+            if (ip == null) { Say(Texts.PickSharer, Ui.Danger); return; }
+            pullName = Caster.NameOf(pcBox.Text) ?? ip.ToString();
+            ToggleReceive();
+            if (receiver == null) return;
+            pullFrom = ip;
+            lastPullAt = Clock.Ms();
+            ShareHost.AskToCast(ip);
+        }
+
+        void ToggleReceive()
+        {
+            if (receiver != null) { StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
+            receiver = new PcReceiver();
+            receiver.Start();
+            if (receiver.Error != null) { Say(receiver.Error, Ui.Danger); receiver.Dispose(); receiver = null; return; }
+            recvBtn.Text = Texts.ReceiveStop;
+            StyleButtons();
+            Say(string.Format(Texts.ReceiveWaiting, pullName), Ui.Waiting);
+        }
+
+        void StopReceive()
+        {
+            CloseViewer();
+            if (receiver != null) receiver.Dispose();
+            receiver = null;
+            recvCode.Text = "";
+            recvBtn.Text = Texts.ReceiveStart;
+            ShowDirections();
+            StyleButtons();
+        }
+
+        void CloseViewer()
+        {
+            ViewerForm v = viewer;
+            viewer = null;
+            if (receiver != null) receiver.Draw = null;
+            if (v != null && !v.IsDisposed) v.Close();
+        }
+
+        /// <summary>every second from Tick: the picture window while a cast arrives, the state line</summary>
+        void ReceiveTick()
+        {
+            PcReceiver r = receiver;
+            if (r == null) return;
+            string code = r.PairCode;
+            recvCode.Text = code ?? "";
+            // keep asking the sharing PC until its picture arrives (a lost packet, or its user
+            // still deciding about the code)
+            if (pullFrom != null && !r.Streaming && Clock.Ms() - lastPullAt > 1500)
+            {
+                lastPullAt = Clock.Ms();
+                ShareHost.AskToCast(pullFrom);
+            }
+            ShowDirections();
+            if (r.Streaming && viewer == null)
+            {
+                viewer = new ViewerForm("CastLink · " + r.CasterName, r);
+                ViewerForm v = viewer;
+                v.FormClosed += delegate
+                {
+                    // the user closed the picture: this cast ends here (the other PC sees it stop)
+                    if (viewer == v) { viewer = null; StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); }
+                };
+                v.Show();
+                v.Activate();
+                r.Draw = v.ShowFrame;
+            }
+            else if (!r.Streaming && viewer != null) CloseViewer();
+            long now = Clock.Ms();
+            int shown = r.ShownFrames;
+            double fps = (shown - lastShown) / Math.Max(0.5, (now - lastRecvTick) / 1000.0);
+            lastShown = shown;
+            lastRecvTick = now;
+            if (r.Error != null) Say(r.Error, Ui.Danger);
+            else if (code != null) Say(Texts.ReceiveCodeAsk + "\n" + code, Ui.Waiting);
+            else if (r.Streaming) Say(string.Format(Texts.ReceiveShowing, r.CasterName, fps, r.Width, r.Height), Ui.Good);
+            else
+            {
+                // what arrived so far, to tell a blocked network from a refused connection
+                string[] wait = string.Format(Texts.ReceiveWaiting, pullName).Split('\n');
+                string seen = string.Format(Texts.ReceivePackets, r.Packets, r.Rejected);
+                Say(wait[0] + " · " + seen + "\n" + (r.LastEvent.Length > 0 ? r.LastEvent : wait[1]), Ui.Waiting);
+            }
+            if (logFile != null && r.Streaming)
+            {
+                long n = Interlocked.Exchange(ref r.TimedFrames, 0);
+                double k = 1000.0 / Stopwatch.Frequency / Math.Max(1, n);
+                string line = string.Format("receive {0:0} fps {1}x{2} | decode {3:0.0} ms, convert {4:0.0} ms, draw {5:0.0} ms | lost {6}, {7:0.0} Mb/s",
+                    fps, r.Width, r.Height, Interlocked.Exchange(ref r.DecodeTicks, 0) * k, Interlocked.Exchange(ref r.ConvertTicks, 0) * k,
+                    Interlocked.Exchange(ref r.DrawTicks, 0) * k, r.Lost, Interlocked.Exchange(ref r.Bytes, 0) * 8 / 1e6);
+                try { File.AppendAllText(logFile, DateTime.Now.ToString("HH:mm:ss ") + line + Environment.NewLine); } catch (IOException) { }
+            }
+        }
+
         void StopCast()
         {
             if (caster != null) caster.Stop();
@@ -2978,15 +3733,18 @@ namespace TVCast
             web = null;
             goBtn.Text = Texts.Show;
             ipadBtn.Text = Texts.ShowIpad;
+            pcGoBtn.Text = share != null ? Texts.ShareStop : Texts.ShareStart;
+            castToPc = false;
             StyleButtons();
             ipadMode = "";
-            findBtn.Enabled = soundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled = goBtn.Enabled = ipadBtn.Enabled = screenBox.Enabled = true;
+            findBtn.Enabled = pcFindBtn.Enabled = soundBox.Enabled = pcSoundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled
+                = goBtn.Enabled = pcGoBtn.Enabled = ipadBtn.Enabled = screenBox.Enabled = true;
         }
 
         void SaveAll()
         {
-            SaveSettings(new[] { tvBox.Text, soundBox.Checked ? "1" : "0", fpsBox.Checked ? "120" : "60", controlBox.Checked ? "1" : "0", ipadCode ?? "", SelectedScreen(),
-                webSoundBox.Checked ? "1" : "0", webControlBox.Checked ? "1" : "0" });
+            SaveSettings(new[] { "", soundBox.Checked ? "1" : "0", fpsBox.Checked ? "120" : "60", controlBox.Checked ? "1" : "0", ipadCode ?? "", SelectedScreen(),
+                webSoundBox.Checked ? "1" : "0", webControlBox.Checked ? "1" : "0", ownPointerBox.Checked ? "1" : "0" });
         }
 
         /// <summary>the monitors for the screen box; the saved one (or the primary) selected</summary>
@@ -3015,7 +3773,9 @@ namespace TVCast
             return screenBox.SelectedItem is ScreenInfo ? ((ScreenInfo)screenBox.SelectedItem).Key : savedScreen;
         }
 
-        void Toggle()
+        /// <param name="toPc">from the "This PC" page: to another PC (its own box and checkboxes);
+        /// otherwise the CastLink app page (TV, phone)</param>
+        void Toggle(bool toPc = false)
         {
             if (caster != null)
             {
@@ -3025,7 +3785,9 @@ namespace TVCast
                 if (homeRefused != null) { Say(homeRefused, Ui.Danger); homeRefused = null; }
                 return;
             }
-            IPAddress ip = ParseTv(tvBox.Text);
+            ComboBox box = toPc ? pcBox : tvBox;
+            string entry = toPc && pulledEntry != null ? pulledEntry : box.Text;
+            IPAddress ip = ParseTv(entry);
             if (ip == null)
             {
                 Say(Texts.EnterIp, Ui.Danger);
@@ -3034,14 +3796,18 @@ namespace TVCast
             SaveAll();
             TVCast.Capture.Screen = SelectedScreen(); // (Capture alone is the Form's mouse-capture flag)
             if (!argFps || fpsBox.Checked != (Caster.FPS >= 120)) Caster.FPS = fpsBox.Checked ? 120 : 60;
-            caster = new Caster(ip, soundBox.Checked);
-            caster.TvName = Caster.NameOf(tvBox.Text); // to find it again when the USB cable is pulled
-            caster.AllowControl = controlBox.Checked; // a phone that shows the PC may control it
+            castToPc = toPc;
+            caster = new Caster(ip, (toPc ? pcSoundBox : soundBox).Checked);
+            caster.TvName = Caster.NameOf(entry); // to find it again when the USB cable is pulled
+            caster.AllowControl = (toPc ? pcControlBox : controlBox).Checked; // the device that shows this PC may control it
             caster.Start();
-            goBtn.Text = Texts.Stop;
-            goBtn.Focus();
+            FlatButton go = toPc ? pcGoBtn : goBtn;
+            go.Text = Texts.Stop;
+            go.Focus();
             StyleButtons();
-            findBtn.Enabled = soundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled = ipadBtn.Enabled = screenBox.Enabled = false;
+            findBtn.Enabled = pcFindBtn.Enabled = soundBox.Enabled = pcSoundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled
+                = ipadBtn.Enabled = screenBox.Enabled = false;
+            (toPc ? goBtn : pcGoBtn).Enabled = false; // one cast at a time
             lastFrames = lastBytes = 0;
             lastTick = Clock.Ms();
         }
@@ -3122,7 +3888,7 @@ namespace TVCast
         {
             if (++usbCheck % 2 == 0) CheckUsbInternet(); // every 2 s
             if (caster == null && homeGuard != null) GuardHome();
-            if (caster == null) return;
+            if (caster == null) { ReceiveTick(); AutoFindPcs(); return; }
             if (caster.WrongGpu && !askedGpu && !noAsk)
             {
                 askedGpu = true;
@@ -3132,7 +3898,7 @@ namespace TVCast
             // a virtual screen on the integrated card's encoder: offer the faster NVIDIA one
             if (!askedFastGpu && !noAsk && !string.IsNullOrEmpty(caster.EncoderName))
             {
-                string flag = web != null ? "--ipad" : "--start";
+                string flag = web != null ? "--ipad" : share != null ? "--share" : "--start";
                 BeginInvoke((MethodInvoker)delegate { AskFastGpu(flag); });
             }
             long now = Clock.Ms(), f = Interlocked.Read(ref caster.Frames), b = Interlocked.Read(ref caster.Bytes);
@@ -3189,6 +3955,9 @@ namespace TVCast
                 long en = Interlocked.Exchange(ref caster.EncN, 0), es = Interlocked.Exchange(ref caster.EncNs, 0);
                 long cn = Interlocked.Exchange(ref caster.ConvN, 0), cs = Interlocked.Exchange(ref caster.ConvNs, 0);
                 string diag = string.Format(" | encoder {0:0.0} ms, NV12 {1:0.0} ms", en > 0 ? es / 1e6 / en : 0, cn > 0 ? cs / 1e6 / cn : 0);
+                long wn = Interlocked.Exchange(ref caster.WaitNs, 0), inn = Interlocked.Exchange(ref caster.InNs, 0), sn = Interlocked.Exchange(ref caster.SendNs, 0);
+                diag += string.Format(" | screen {0}/s", Interlocked.Exchange(ref caster.Pictures, 0));
+                if (cn > 0) diag += string.Format(" (per frame: ready-to-input {0:0.0}, input {1:0.0}, send {2:0.0} ms)", wn / 1e6 / cn, inn / 1e6 / cn, sn / 1e6 / cn);
                 if (caster.FirstKeyHex.Length > 0) { diag += " | key " + caster.FirstKeyHex; caster.FirstKeyHex = "-"; }
                 if (web == null) diag += " | via " + (caster.Usb ? "USB" : "Wi-Fi") + ", moves " + caster.Moves + ", search " + caster.RouteNote + ", heard " + Interlocked.Read(ref caster.Heard) + " " + caster.RecvError;
                 try { File.AppendAllText(logFile, DateTime.Now.ToString("HH:mm:ss ") + line.Replace('\n', ' ') + diag + Environment.NewLine); }
