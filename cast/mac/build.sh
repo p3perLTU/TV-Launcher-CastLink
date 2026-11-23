@@ -9,7 +9,7 @@ set -o pipefail
 cd "$(dirname "$0")"
 exec > >(tee build.log) 2>&1
 
-VERSION=1.0
+VERSION=1.1
 
 # the iPad page is the Windows version's, built into the binary
 PAGE=../pc/web/ipad.html
