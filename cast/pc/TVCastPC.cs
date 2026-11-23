@@ -1996,7 +1996,7 @@ namespace TVCast
         public static string NoScreen, NoOutput1, ScreenFormat, NoEncoder, EncoderError;
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
         public static string WrongGpuAskNvidia, WrongGpuStuck;
-        public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
+        public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
             SendHeader, GetHeader, ShowPc, OtherPc, PcControl;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
@@ -2089,8 +2089,9 @@ namespace TVCast
             NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
             ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
             ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
-            ReceiveHint = lt ? "Kitas kompiuteris su CastLink gali rodyti savo ekraną čia, per visą šio kompiuterio ekraną."
-                             : "Another PC with CastLink can show its screen here, full screen on this PC.";
+            ReceiveHint = lt ? "Kompiuteris, kurio ekraną nori matyti, siunčia. Kompiuteris, prie kurio sėdi, gauna."
+                             : "The PC whose screen you want to see sends. The PC you sit at receives.";
+            PcPageTitle = lt ? "Iš kompiuterio į kompiuterį" : "From PC to PC";
             ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
             ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
             ReceiveWaiting = lt ? "Laukiama ryšio\nKitame kompiuteryje CastLink spausk „Ieškoti“, pasirink „{0}“ ir „Rodyti“."
@@ -2581,8 +2582,8 @@ namespace TVCast
             appPage = Page(Texts.TvSection, PX, PW, PH, out appHint, Texts.AppHint);
             webPage = Page(Texts.IpadSection, PX, PW, PH, out webHint, Texts.WebHint);
             screensPage = Page(Texts.ScreensSection, PX, PW, PH, out screensHint, Texts.ScreensHint);
-            recvPage = Page(Texts.ReceiveSection, PX, PW, PH, out recvHint, "");
-            recvHint.Visible = false; // the two halves have their own headers
+            recvPage = Page(Texts.PcPageTitle, PX, PW, PH, out recvHint, Texts.ReceiveHint);
+            recvHint.Height = Ui.S(22); // one line: which PC sends and which receives
             pages = new[] { appPage, webPage, screensPage, recvPage };
 
             // CastLink app (Android phone, tablet or TV)
@@ -2664,11 +2665,11 @@ namespace TVCast
 
             // this PC and other PCs: two cards side by side, left sends this screen to another PC,
             // right waits for another PC to show its screen here; each card names both ends
-            const int CW = (PW - 32 - 12) / 2, CH = PH - 50 - 16, CI = CW - 28;
+            const int CW = (PW - 32 - 12) / 2, CY = 76, CH = PH - CY - 16, CI = CW - 28;
             Font headerFont = new Font("Segoe UI Semibold", 12.5f), dirFont = new Font("Segoe UI", 9f);
-            sendCard.Location = Ui.P(16, 50);
+            sendCard.Location = Ui.P(16, CY);
             sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
-            getCard.Location = Ui.P(16 + CW + 12, 50);
+            getCard.Location = Ui.P(16 + CW + 12, CY);
             getCard.Size = sendCard.Size;
             sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
