@@ -24,6 +24,11 @@ final class MacInput {
     // the last pointer input was the TV mouse (relative), not a touch / absolute position
     private var relative = false
 
+    /// KEYRAW keys held down now (macOS key codes): let go when the cast ends
+    private var heldKeys = Set<UInt16>()
+    /// KEYRAW comes only from a PC receiver (it said its refresh rate in INFO)
+    var rawKeysAllowed = false
+
     /// a line for input.log (what was done with an event, or why not)
     var log: ((String) -> Void)?
     // double / triple clicks: macOS counts them only if the events say so
@@ -65,6 +70,7 @@ final class MacInput {
         }
         if clicks > 0 { e?.setIntegerValueField(.mouseEventClickState, value: Int64(clicks)) }
         if button == 2 { e?.setIntegerValueField(.mouseEventButtonNumber, value: 2) }
+        if !heldKeys.isEmpty { e?.flags = modifierFlags() } // Command-click and the like
         post(e)
     }
 
@@ -133,6 +139,52 @@ final class MacInput {
         }
         swallowed = [false, false, false]
         putBack()
+        // keys from a PC receiver: none stays down (a held Command would turn every click into Command-click)
+        for k in heldKeys { rawKey(k, down: false) }
+        heldKeys.removeAll()
+    }
+
+    // ---- KEYRAW: the whole keyboard of a PC receiver ------------------------------------------
+
+    private func modifierFlags() -> CGEventFlags {
+        var f: CGEventFlags = []
+        for k in heldKeys {
+            switch KeyMap.modifier(k) {
+            case .shift: f.insert(.maskShift)
+            case .control: f.insert(.maskControl)
+            case .option: f.insert(.maskAlternate)
+            case .command: f.insert(.maskCommand)
+            case nil: break
+            }
+        }
+        return f
+    }
+
+    private func rawKey(_ k: UInt16, down: Bool) {
+        let e = CGEvent(keyboardEventSource: source, virtualKey: k, keyDown: down)
+        var f = modifierFlags()
+        if KeyMap.isFunctionKey(k) { f.insert(.maskSecondaryFn) }
+        if KeyMap.isArrow(k) { f.insert(.maskNumericPad) }
+        if KeyMap.modifier(k) != nil {
+            // a modifier on its own is a "flags changed" event
+            e?.type = .flagsChanged
+        }
+        e?.flags = f
+        post(e)
+    }
+
+    private func applyRawKey(_ e: InputEvent) {
+        guard rawKeysAllowed else { log?("raw key refused: not a PC receiver"); return }
+        guard let k = KeyMap.macKey(vk: e.key, extended: e.extended) else { return }
+        if e.down {
+            // a key (not Shift / Ctrl / ...) goes only to a window on the shown screen
+            if KeyMap.modifier(k) == nil && !typingOnShownScreen() { log?("raw key refused: the front window is not on the shown screen"); return }
+            heldKeys.insert(k)
+        } else {
+            // a key let go that was never pressed here (refused, or pressed before the cast) is left alone
+            guard heldKeys.remove(k) != nil else { return }
+        }
+        rawKey(k, down: e.down)
     }
 
     private func scroll(_ dy: Int, _ dx: Int, at p: CGPoint, borrow: Bool = false, move: Bool = true) {
@@ -197,8 +249,20 @@ final class MacInput {
             if typingOnShownScreen() { type(e.text); log?("text typed (\(e.text.count) chars)") } else { log?("text refused: the front window is not on the shown screen") }
         case .key:
             if typingOnShownScreen(), let k = MacInput.keyCodes[e.key] { key(k); log?("key \(e.key) pressed") } else { log?("key \(e.key) refused: the front window is not on the shown screen") }
+        case .keyRaw:
+            applyRawKey(e) // not logged: the log must not record what is typed
+        case .moveTo:
+            // a PC receiver's mouse moves the real pointer, on the shown screen
+            relative = true
+            lastRelative = Date().timeIntervalSinceReferenceDate
+            let to = point(e.x, e.y)
+            relPos = to
+            if let b = held.firstIndex(of: true) { mouse(dragType(b), to, b) } else { mouse(.mouseMoved, to, 0) }
+        case .wheelHere:
+            let at = relPos ?? pointerNow()
+            scroll(e.wheelY, e.wheelX, at: at, move: false)
         }
-        if e.kind != .moveBy && e.kind != .buttonHere && e.kind != .text && e.kind != .key { log?("\(e.kind) \(e.button) \(e.down) \(e.x),\(e.y) wheel \(e.wheelY),\(e.wheelX) applied") }
+        if e.kind != .moveBy && e.kind != .buttonHere && e.kind != .text && e.kind != .key && e.kind != .keyRaw && e.kind != .moveTo { log?("\(e.kind) \(e.button) \(e.down) \(e.x),\(e.y) wheel \(e.wheelY),\(e.wheelX) applied") }
     }
 
     /// a point kept on the shown screen

@@ -11,6 +11,13 @@ The macOS sender of CastLink: this Mac's screen, or a **virtual second screen**,
 
 When the cast of a virtual screen ends, the windows left on it come back to the main screen.
 
+**Sharing with a Windows PC.** Press **Share screen** on the CastLink app page: the Mac waits on
+UDP 47802 (as `cast/pc/Share.cs`). On the PC, CastLink's **This PC** page lists the Mac; pick it
+and press **Show**. The Mac then casts to the PC like to a TV (the pairing code is confirmed on
+the Mac the first time). A PC receiver says its refresh rate in INFO, so it gets as many frames
+as the shown screen draws (30..240) and its whole keyboard: Win is Command, Ctrl is Control, Alt
+is Option. macOS asks once whether CastLink may accept incoming connections: allow it.
+
 ## Build
 
 Needs macOS 13 or newer and the Xcode Command Line Tools (`xcode-select --install`).

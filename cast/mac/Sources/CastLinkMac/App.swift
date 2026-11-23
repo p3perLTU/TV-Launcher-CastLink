@@ -50,6 +50,11 @@ final class AppModel: ObservableObject {
     @Published var pairCode = ""
     @Published var pairName = ""
     private var tvCast: TvCast?
+    // ---- sharing with a Windows PC: it picks this Mac and asks for the picture ----
+    @Published var sharing = false
+    private var share: ShareHost?
+    /// the PC the current cast goes to because it asked (nil: a cast the user started)
+    private var pulledIP: String?
     private var statsTimer: Timer?
     @Published var sound: Bool { didSet { defaults.set(sound, forKey: "sound") } }
     @Published var control: Bool {
@@ -254,8 +259,50 @@ final class AppModel: ObservableObject {
         if tvRunning || tvStarting { stopTv() } else { startTv() }
     }
 
-    func startTv() {
-        guard let ip = targetAddress() else { setStatus(t.enterIp, .error); return }
+    // ---- sharing with a Windows PC ----
+
+    func toggleShare() {
+        if sharing {
+            stopShare()
+            setStatus(t.shareOff, .idle)
+            return
+        }
+        if tvRunning || tvStarting { return } // already showing on a phone or TV
+        let h = ShareHost()
+        h.onPull = { [weak self] ip, name in Task { @MainActor in self?.onPulled(ip, name) } }
+        guard h.start() else { setStatus(t.sharePortBusy, .error); return }
+        share = h
+        sharing = true
+        if control && !MacInput.trusted(prompt: true) { needAccessibility = true }
+        setStatus(t.shareWaiting(ShareHost.computerName()), .waiting)
+    }
+
+    func stopShare() {
+        share?.stop()
+        share = nil
+        sharing = false
+        if pulledIP != nil && (tvRunning || tvStarting) { stopTv() }
+        pulledIP = nil
+    }
+
+    /// a PC picked this Mac: cast to it (the pairing code is confirmed as with every new device)
+    private func onPulled(_ ip: String, _ name: String) {
+        guard sharing else { return }
+        if tvRunning || tvStarting {
+            guard pulledIP != nil else { return } // busy with a phone or TV
+            if ip == pulledIP { return } // already casting to it
+            // another PC asks while the current one still answers: it waits, so two viewers do
+            // not take the picture from each other every second
+            if let c = tvCast, c.quietMs < 4000 { return }
+            stopTv()
+        }
+        pulledIP = ip
+        startTv(to: (ip, "\(name) (\(ip))"))
+    }
+
+    func startTv(to forced: (ip: String, label: String)? = nil) {
+        guard let ip = forced?.ip ?? targetAddress() else { setStatus(t.enterIp, .error); return }
+        let label = forced?.label ?? device
         if running || starting { stop() } // one cast at a time
         let cfg = castConfig()
         if control && !MacInput.trusted(prompt: true) { needAccessibility = true }
@@ -272,7 +319,7 @@ final class AppModel: ObservableObject {
         tvStarting = true
         needScreenPermission = false
         detail = ""
-        setStatus(t.connecting(device), .waiting)
+        setStatus(t.connecting(label), .waiting)
         Task {
             do {
                 try await cast.start()
@@ -342,7 +389,9 @@ final class AppModel: ObservableObject {
         tvStarting = false
         pairAsk = false
         detail = ""
-        setStatus(t.stopped, .idle)
+        pulledIP = nil
+        // still sharing: the next PC may ask
+        if sharing { setStatus(t.shareWaiting(ShareHost.computerName()), .waiting) } else { setStatus(t.stopped, .idle) }
     }
 
     func openPrivacy(_ pane: String) {
@@ -380,7 +429,7 @@ struct CastLinkApp: App {
                 .environmentObject(model)
                 .frame(width: 800, height: 540)
                 .preferredColorScheme(.dark)
-                .onAppear { delegate.onQuit = { [model] in model.session.stop(); model.stopTv() } }
+                .onAppear { delegate.onQuit = { [model] in model.session.stop(); model.stopShare(); model.stopTv() } }
         }
         .windowResizability(.contentSize)
     }
@@ -556,6 +605,12 @@ struct AppPage: View {
             .padding(.bottom, 16)
             BigButton(title: m.tvRunning || m.tvStarting ? m.t.stop : m.t.showOnDevice,
                       icon: m.tvRunning || m.tvStarting ? "stop.fill" : "play", prominent: !m.tvRunning && !m.tvStarting) { m.toggleTv() }
+            Text(m.t.shareHint).font(.system(size: 12)).foregroundColor(Look.dim).padding(.top, 14)
+                .fixedSize(horizontal: false, vertical: true)
+            BigButton(title: m.sharing ? m.t.shareStop : m.t.shareStart,
+                      icon: m.sharing ? "stop.fill" : "rectangle.on.rectangle", prominent: false, height: 34) { m.toggleShare() }
+                .disabled(!m.sharing && (m.tvRunning || m.tvStarting))
+                .padding(.top, 6)
         }
     }
 }

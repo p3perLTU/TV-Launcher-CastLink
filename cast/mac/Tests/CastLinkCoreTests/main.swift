@@ -234,12 +234,44 @@ do {
     check(InputDecoder.decode([4, 0x61, 0x0D]) == nil, "control characters only as KEY")
     check(InputDecoder.decode([4, 0xC3]) == nil, "broken UTF-8")
     check(InputDecoder.decode([UInt8](repeating: 0, count: 600)) == nil, "too long")
-    check(InputDecoder.decode([9]) == nil, "unknown type")
+    check(InputDecoder.decode([13]) == nil, "unknown type")
+    check(InputDecoder.decode([9]) == nil, "short wheel-at")
+    e = InputDecoder.decode([10, 0x41, 1, 0])!
+    check(e.kind == .keyRaw && e.key == 0x41 && e.down && !e.extended, "raw key A down")
+    e = InputDecoder.decode([10, 0xA3, 0, 1])!
+    check(e.kind == .keyRaw && e.key == 0xA3 && !e.down && e.extended, "raw right Ctrl up, extended")
+    check(InputDecoder.decode([10, 0, 1, 0]) == nil, "raw vk 0 is no key")
+    check(InputDecoder.decode([10, 0xFF, 1, 0]) == nil, "raw vk 0xFF is no key")
+    check(InputDecoder.decode([10, 0x41, 2, 0]) == nil, "raw key: down is 0 or 1")
+    check(InputDecoder.decode([10, 0x41, 1]) == nil, "short raw key")
+    e = InputDecoder.decode([11, 0xFF, 0xFF, 0, 0])!
+    check(e.kind == .moveTo && e.x == 65535 && e.y == 0, "move-to")
+    check(InputDecoder.decode([11, 0, 0, 0]) == nil, "short move-to")
+    e = InputDecoder.decode([12, 0x7F, 0xFF, 0xFF, 0x88])!
+    check(e.kind == .wheelHere && e.wheelY == 1200 && e.wheelX == -120, "wheel-here, at most 10 notches")
     check(InputDecoder.decode([6, 0, 1]) == nil, "short move-by")
     check(InputDecoder.decode([7, 3, 1]) == nil, "no button 3 here either")
     let p = InputDecoder.toScreen(65535, 0, left: 1440, top: -100, width: 1080, height: 810)
     check(p.0 == 1440 + 1079 && p.1 == -100, "touch lands on the shown screen (right of the main one)")
 }
+
+// ---- raw keys from a PC receiver ---------------------------------------------------------
+equal(0x00, KeyMap.macKey(vk: 0x41, extended: false) ?? 0xFFFF, "A")
+equal(0x06, KeyMap.macKey(vk: 0x5A, extended: false) ?? 0xFFFF, "Z")
+equal(0x1D, KeyMap.macKey(vk: 0x30, extended: false) ?? 0xFFFF, "0")
+equal(0x7A, KeyMap.macKey(vk: 0x70, extended: false) ?? 0xFFFF, "F1")
+equal(0x6F, KeyMap.macKey(vk: 0x7B, extended: false) ?? 0xFFFF, "F12")
+equal(0x37, KeyMap.macKey(vk: 0x5B, extended: true) ?? 0xFFFF, "Win is Command")
+equal(0x3B, KeyMap.macKey(vk: 0x11, extended: false) ?? 0xFFFF, "Ctrl is Control")
+equal(0x3E, KeyMap.macKey(vk: 0x11, extended: true) ?? 0xFFFF, "right Ctrl")
+equal(0x3A, KeyMap.macKey(vk: 0x12, extended: false) ?? 0xFFFF, "Alt is Option")
+equal(0x4C, KeyMap.macKey(vk: 0x0D, extended: true) ?? 0xFFFF, "keypad Enter")
+equal(0x24, KeyMap.macKey(vk: 0x0D, extended: false) ?? 0xFFFF, "Enter")
+equal(0x75, KeyMap.macKey(vk: 0x2E, extended: true) ?? 0xFFFF, "Delete is Forward Delete")
+equal(0x7B, KeyMap.macKey(vk: 0x25, extended: true) ?? 0xFFFF, "Left")
+check(KeyMap.macKey(vk: 0x5D, extended: true) == nil, "the menu key has no Mac match")
+check(KeyMap.modifier(0x37) == .command && KeyMap.modifier(0x3C) == .shift && KeyMap.modifier(0x00) == nil, "modifiers")
+check(KeyMap.isArrow(0x7E) && !KeyMap.isArrow(0x24) && KeyMap.isFunctionKey(0x7A), "arrows and Fn keys")
 
 // ---- the encrypted link (golden values from tests/cs/Tests.cs, the same as the Java tests) ----
 
@@ -349,6 +381,22 @@ do {
     check(true, "cut and looping mDNS packets")
 }
 equal("Living room", Proto.nameReply([Proto.name] + Array(" Living room ".utf8)) ?? "nil", "NAME answer")
+equal("Office PC", Proto.nameReply([Proto.pcName] + Array("Office PC".utf8)) ?? "nil", "PCNAME answer")
+equal("Phone", Proto.nameReply([Proto.phoneName] + Array("Phone".utf8)) ?? "nil", "PHONENAME answer")
+check(Proto.nameReply([Proto.shareName] + Array("x".utf8)) == nil, "SHARE_NAME is not a receiver's name")
+check(Proto.nameReply([Proto.pcName]) == nil, "an empty name")
+equal([Proto.shareName] + Array("Mac".utf8), Proto.textPacket(Proto.shareName, "Mac"), "SHARE_NAME packet")
+equal(256, Proto.textPacket(Proto.pull, String(repeating: "a", count: 400)).count, "a name is cut to 255 bytes")
+check(String(bytes: Proto.textPacket(Proto.pull, String(repeating: "ą", count: 200)).dropFirst(), encoding: .utf8) != nil, "cut on a character boundary")
+equal("Desk PC", Proto.packetText([Proto.pull] + Array(" Desk PC ".utf8)) ?? "nil", "PULL viewer name")
+check(Proto.packetText([Proto.pull]) == nil, "PULL without a name")
+equal(144, Proto.pcFps(receiverHz: 60, ownHz: 144), "a PC receiver gets the shared screen's rate")
+equal(60, Proto.pcFps(receiverHz: 60, ownHz: 0), "the receiver's rate when the screen does not say")
+equal(240, Proto.pcFps(receiverHz: 60, ownHz: 360), "at most 240")
+equal(30, Proto.pcFps(receiverHz: 24, ownHz: 0), "at least 30")
+equal(20_000_000, Proto.pcBitrate(fps: 60, 1920, 1080), "20 Mb/s for 1080p60")
+equal(48_000_000, Proto.pcBitrate(fps: 144, 1920, 1080), "more frames, more bits")
+equal(80_000_000, Proto.pcBitrate(fps: 240, 2560, 1600), "at most 80 Mb/s")
 check(Proto.inputMessage([Proto.input, 1, 2, 3, 4, 5, 6, 7, 8, 5, 0x0D], token: [1, 2, 3, 4, 5, 6, 7, 8]) == [5, 0x0D], "INPUT with the token")
 check(Proto.inputMessage([Proto.input, 1, 2, 3, 4, 5, 6, 7, 9, 5, 0x0D], token: [1, 2, 3, 4, 5, 6, 7, 8]) == nil, "INPUT with another token")
 check(Proto.fit(2560, 1600, maxW: 1920, maxH: 1080) == (1728, 1080), "a 16:10 screen to a 1080p TV")

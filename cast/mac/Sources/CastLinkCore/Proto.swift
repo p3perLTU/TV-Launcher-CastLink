@@ -9,6 +9,14 @@ public enum Proto {
 
     public static let config: UInt8 = 1, video: UInt8 = 2, audio: UInt8 = 3, keyreq: UInt8 = 10, bye: UInt8 = 11
     public static let ping: UInt8 = 12, pong: UInt8 = 13, input: UInt8 = 14, who: UInt8 = 15, name: UInt8 = 16, info: UInt8 = 17
+    /// like NAME, from a Windows PC receiver / a phone receiver
+    public static let pcName: UInt8 = 18, phoneName: UInt8 = 19
+
+    // PC -> PC sharing, in the clear on UDP 47802 (cast/pc/Share.cs): a PC that wants this Mac's
+    // picture asks for it; this Mac then casts to that PC's port 47800 as to a TV
+    public static let sharePort: UInt16 = 47802
+    /// SHARE_WHO (viewer -> broadcast), SHARE_NAME | UTF-8 name (answer), PULL | UTF-8 viewer name
+    public static let shareWho: UInt8 = 30, shareName: UInt8 = 31, pull: UInt8 = 32
     public static let configControl: UInt8 = 1
     public static let tokenBytes = 8
     public static let configLong = 14 + 1 + 8
@@ -75,11 +83,40 @@ public enum Proto {
         return q
     }
 
-    /// a receiver's NAME answer to WHO, nil if the packet is something else
+    /// a receiver's NAME / PCNAME / PHONENAME answer to WHO, nil if the packet is something else
     public static func nameReply(_ b: [UInt8]) -> String? {
-        guard b.count >= 2, b[0] == name else { return nil }
-        let s = String(decoding: b[1...], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+        guard b.count >= 2, b[0] == name || b[0] == pcName || b[0] == phoneName else { return nil }
+        return packetText(b)
+    }
+
+    /// type | UTF-8 text, the text cut to at most 255 bytes (on a character boundary)
+    public static func textPacket(_ type: UInt8, _ text: String) -> [UInt8] {
+        var t = Array(text.utf8)
+        if t.count > 255 {
+            t = Array(t.prefix(255))
+            while !t.isEmpty, String(bytes: t, encoding: .utf8) == nil { t.removeLast() }
+        }
+        return [type] + t
+    }
+
+    /// the text after the type byte (at most 255 bytes), trimmed; nil when empty
+    public static func packetText(_ b: [UInt8]) -> String? {
+        guard b.count >= 2 else { return nil }
+        let s = String(decoding: b[1..<min(b.count, 256)], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
+    }
+
+    /// frames a second to a PC receiver: as many as the shared screen shows (else the receiver's
+    /// rate), 30..240 (Caster.PcFps)
+    public static func pcFps(receiverHz: Int, ownHz: Int) -> Int {
+        return max(30, min(240, ownHz > 0 ? ownHz : receiverHz))
+    }
+
+    /// bits a second to a PC receiver: 20 Mb/s per 60 frames of 1080p, more pixels a little more,
+    /// at most 80 Mb/s (Caster.PcBitrate)
+    public static func pcBitrate(fps: Int, _ w: Int, _ h: Int) -> Int {
+        let k = Double(fps) / 60.0 * max(1.0, min(1.6, Double(w * h) / (1920.0 * 1080.0)))
+        return Int(min(80_000_000, 20_000_000 * k))
     }
 
     /// the instance name of a PTR answer for _tvcast, nil for anything else (also cut or hostile packets)
