@@ -1184,6 +1184,23 @@ namespace TVCast
 
         /// <summary>the receiver's screen (INFO), 0 until an INFO came (older receivers send none)</summary>
         public volatile int RecvW, RecvH;
+        /// <summary>a PC receiver's refresh rate (INFO), 0 for a TV or phone</summary>
+        public volatile int RecvHz;
+
+        /// <summary>frames a second to a PC receiver: as many as both screens show, at most 240
+        /// (unit-tested)</summary>
+        internal static int PcFps(int receiverHz, int ownHz)
+        {
+            return Math.Max(30, Math.Min(240, Math.Min(receiverHz, ownHz)));
+        }
+
+        /// <summary>bits a second to a PC receiver: 20 Mb/s per 60 frames of 1080p, more pixels a
+        /// little more, at most 80 Mb/s (unit-tested)</summary>
+        internal static int PcBitrate(int fps, int w, int h)
+        {
+            double k = fps / 60.0 * Math.Max(1.0, Math.Min(1.6, (double)w * h / (1920.0 * 1080.0)));
+            return (int)Math.Min(80000000, 20000000 * k);
+        }
         public const int MaxSendW = 2560, MaxSendH = 1600;
 
         /// <summary>the largest picture to send: the receiver's own screen when it said (a phone gets
@@ -1453,8 +1470,10 @@ namespace TVCast
                 int w = (int)(cap.W * s) & ~1, h = (int)(cap.H * s) & ~1;
                 byte[] nv12 = new byte[w * h * 3 / 2];
                 Pointer ptr = new Pointer();
-                int fps = Fps;
-                using (Encoder enc = new Encoder(w, h, fps, web != null ? Bitrate : ScaledBitrate(Bitrate, w, h, Usb), web != null ? 66 : 100))
+                bool toPc = web == null && RecvHz > 0;
+                int fps = toPc ? PcFps(RecvHz, DisplayHz.Of(cap.ScreenDevice)) : Fps;
+                int rate = web != null ? Bitrate : toPc ? PcBitrate(fps, w, h) : ScaledBitrate(Bitrate, w, h, Usb);
+                using (Encoder enc = new Encoder(w, h, fps, rate, web != null ? 66 : 100))
                 {
                     EncoderName = enc.Name + (enc.Hardware ? "" : Texts.Software);
                     vw = w;
@@ -1618,6 +1637,9 @@ namespace TVCast
                         RecvW = w; RecvH = h;
                         restartVideo = true; // the encoder starts again at the receiver's size
                     }
+                    // a PC receiver adds its screen's refresh rate (TVs and phones do not)
+                    int hz = n >= 13 ? Proto.GetInt(inb, 9) : 0;
+                    if (hz >= 24 && hz <= 1000 && hz != RecvHz) { RecvHz = hz; restartVideo = true; }
                 }
                 else if (n >= 9 && inb[0] == Proto.PING)
                 {
@@ -3111,6 +3133,15 @@ namespace TVCast
             else if (code != null) Say(Texts.ReceiveCodeAsk + "\n" + code, Ui.Waiting);
             else if (r.Streaming) Say(string.Format(Texts.ReceiveShowing, r.CasterName, fps, r.Width, r.Height), Ui.Good);
             else Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
+            if (logFile != null && r.Streaming)
+            {
+                long n = Interlocked.Exchange(ref r.TimedFrames, 0);
+                double k = 1000.0 / Stopwatch.Frequency / Math.Max(1, n);
+                string line = string.Format("receive {0:0} fps {1}x{2} | decode {3:0.0} ms, convert {4:0.0} ms, draw {5:0.0} ms | lost {6}, {7:0.0} Mb/s",
+                    fps, r.Width, r.Height, Interlocked.Exchange(ref r.DecodeTicks, 0) * k, Interlocked.Exchange(ref r.ConvertTicks, 0) * k,
+                    Interlocked.Exchange(ref r.DrawTicks, 0) * k, r.Lost, Interlocked.Exchange(ref r.Bytes, 0) * 8 / 1e6);
+                try { File.AppendAllText(logFile, DateTime.Now.ToString("HH:mm:ss ") + line + Environment.NewLine); } catch (IOException) { }
+            }
         }
 
         void StopCast()

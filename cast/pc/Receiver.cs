@@ -96,6 +96,30 @@ namespace TVCast
         }
     }
 
+    /// <summary>a monitor's refresh rate, from Windows' current display mode</summary>
+    static class DisplayHz
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplaySettings(string device, int mode, byte[] devmode);
+
+        /// <summary>Hz of \\.\DISPLAYn (null: the main screen); 60 if unknown</summary>
+        public static int Of(string device)
+        {
+            byte[] dm = new byte[220]; // DEVMODEW
+            BitConverter.GetBytes((short)220).CopyTo(dm, 68); // dmSize
+            try
+            {
+                if (EnumDisplaySettings(device ?? Screen.PrimaryScreen.DeviceName, -1 /*ENUM_CURRENT_SETTINGS*/, dm))
+                {
+                    int hz = BitConverter.ToInt32(dm, 184); // dmDisplayFrequency
+                    if (hz >= 24 && hz <= 1000) return hz;
+                }
+            }
+            catch (Exception) { }
+            return 60;
+        }
+    }
+
     /// <summary>The Windows H.264 decoder (Media Foundation MFT), H.264 Annex B in, NV12 out.</summary>
     sealed class Decoder : IDisposable
     {
@@ -407,6 +431,9 @@ namespace TVCast
         public volatile string PairCode, CasterName = "", Error;
         public volatile bool Streaming;
         public volatile int ShownFrames, Width, Height, Rejected;
+        /// <summary>timing totals for the log: decode, NV12 -> BGRX, draw (100 ns ticks) and frame count</summary>
+        public long DecodeTicks, ConvertTicks, DrawTicks, TimedFrames;
+        public int Lost { get { return assembler.Lost; } }
         /// <summary>the viewer: Draw(bgrx, w, h) on the decode thread</summary>
         public volatile Action<int[], int, int> Draw;
         public long Bytes;
@@ -546,7 +573,9 @@ namespace TVCast
             if (f == null) return;
             lock (frames)
             {
-                if (frames.Count >= 4) { frames.Clear(); assembler.Dropped(); return; } // decoder behind: start over from a keyframe
+                // the decoder is far behind (a hiccup): start over from a keyframe. Normally every
+                // frame is decoded and only the newest one is drawn, so the queue stays short.
+                if (frames.Count >= 30) { frames.Clear(); assembler.Dropped(); return; }
                 frames.Enqueue(f);
             }
             frameReady.Set();
@@ -567,19 +596,31 @@ namespace TVCast
                     {
                         Assembler.Frame f;
                         lock (frames) { if (frames.Count == 0) break; f = frames.Dequeue(); }
+                        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         try { dec.Input(f.Data, f.PtsUs); }
                         catch (COMException) { assembler.RequestKey(); continue; }
                         int len;
                         while ((len = dec.Output(ref nv12)) > 0)
                         {
+                            bool newer;
+                            lock (frames) newer = frames.Count > 0;
+                            if (newer) { t0 = System.Diagnostics.Stopwatch.GetTimestamp(); continue; } // a newer frame waits: draw that one
+                            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                             int w = cfgW, h = cfgH;
                             int rows = dec.AlignedH > 0 ? dec.AlignedH : h;
                             int stride = len * 2 / 3 / rows;
                             if (stride < w || rows < h) continue;
                             if (bgrx == null || bgrx.Length != w * h) bgrx = new int[w * h];
                             Yuv.ToBgrx(nv12, stride, rows, w, h, bgrx);
+                            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                             Action<int[], int, int> d = Draw;
                             if (d != null) d(bgrx, w, h);
+                            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                            Interlocked.Add(ref DecodeTicks, t1 - t0);
+                            Interlocked.Add(ref ConvertTicks, t2 - t1);
+                            Interlocked.Add(ref DrawTicks, t3 - t2);
+                            Interlocked.Increment(ref TimedFrames);
+                            t0 = t3;
                             ShownFrames++;
                         }
                     }
@@ -614,12 +655,14 @@ namespace TVCast
             lastPing = now;
             if (pings++ % 4 == 0)
             {
-                // every 2 s: this screen's size, so the PC sends the picture that big (1:1 here)
+                // every 2 s: this screen's size and refresh rate, so the PC sends the picture that
+                // big (1:1 here) and as many frames a second as this screen shows
                 Rectangle r = Screen.PrimaryScreen.Bounds;
-                byte[] info = new byte[9];
+                byte[] info = new byte[13];
                 info[0] = Proto.INFO;
                 Proto.PutInt(info, 1, Math.Max(r.Width, r.Height));
                 Proto.PutInt(info, 5, Math.Min(r.Width, r.Height));
+                Proto.PutInt(info, 9, DisplayHz.Of(null));
                 SendSealed(info);
             }
             byte[] b = new byte[9];
@@ -730,7 +773,7 @@ namespace TVCast
             if (dc == IntPtr.Zero) return;
             try
             {
-                SetStretchBltMode(dc, dw == w ? 3 : 4); // COLORONCOLOR 1:1, HALFTONE when scaled
+                SetStretchBltMode(dc, 3); // COLORONCOLOR: HALFTONE took ~11 ms a frame
                 StretchDIBits(dc, dx, dy, dw, dh, 0, 0, w, h, bgrx, bmi, 0, 0x00CC0020 /*SRCCOPY*/);
             }
             finally { ReleaseDC(hw, dc); }

@@ -748,6 +748,17 @@ namespace TVCast.Tests
                 "the caster reads it back field by field");
         }
 
+        static void TestPcReceiverGetsTheScreensFrameRate()
+        {
+            Equal(144, Caster.PcFps(144, 200), "a 144 Hz receiver: 144 even from a 200 Hz PC");
+            Equal(200, Caster.PcFps(240, 200), "never more than the casting screen shows");
+            Equal(240, Caster.PcFps(360, 360), "at most 240");
+            Equal(60, Caster.PcFps(60, 200), "a 60 Hz receiver: 60");
+            Equal(20000000, Caster.PcBitrate(60, 1920, 1080), "1080p 60: 20 Mb/s");
+            Equal(60000000, Caster.PcBitrate(180, 1920, 1080), "1080p 180: three times as much");
+            Equal(80000000, Caster.PcBitrate(240, 2560, 1440), "never above 80 Mb/s");
+        }
+
         static void TestFindAsksTheWholeHomeNetwork()
         {
             Equal("192.168.0.255", Discovery.Broadcast(IPAddress.Parse("192.168.0.20"), IPAddress.Parse("255.255.255.0")).ToString(), "a /24");
