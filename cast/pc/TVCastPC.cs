@@ -2662,7 +2662,8 @@ namespace TVCast
             {
                 string found = FindSettings(LocalSettings, AppDataSettings, OldSettings);
                 string[] lines = found != null ? File.ReadAllLines(found) : new string[0];
-                if (lines.Length > 0) tvBox.Text = lines[0];
+                // line 1 (the device) is not read back: the field starts empty every time, like the
+                // phone app (the user picks from a fresh search, no old addresses)
                 if (lines.Length > 1) soundBox.Checked = lines[1] != "0";
                 if (lines.Length > 2) fpsBox.Checked = lines[2] == "120";
                 if (lines.Length > 3) controlBox.Checked = lines[3] != "0";
@@ -2686,7 +2687,7 @@ namespace TVCast
             IntPtr clickHook = WindowMover.WatchRealClicks(); // ... and one the PC's own mouse picks comes to it
             FormClosed += delegate { WindowMover.Unwatch(fgHook); WindowMover.UnwatchClicks(clickHook); };
             timer.Start();
-            Shown += delegate { if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(); };
+            Shown += delegate { if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(findOnly); };
             FormClosing += delegate { MoveWindowsHome(); StopCast(); StopReceive(); };
         }
 
@@ -2812,7 +2813,9 @@ namespace TVCast
             printLabel.SetBounds(px, y + Ui.S(22), webPage.Width - px - Ui.S(16), Ui.S(36));
         }
 
-        void Search()
+        /// <param name="pick">true when the user pressed Find: the first device found is picked;
+        /// the search when the app opens only fills the list, the field stays empty</param>
+        void Search(bool pick = true)
         {
             findBtn.Enabled = false;
             Say(Texts.Searching, Ui.Waiting);
@@ -2824,7 +2827,7 @@ namespace TVCast
                     findBtn.Enabled = true;
                     tvBox.Items.Clear();
                     foreach (KeyValuePair<string, IPAddress> f in found) tvBox.Items.Add(f.Key + " (" + f.Value + ")");
-                    if (found.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
+                    if (pick && found.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
@@ -3163,7 +3166,7 @@ namespace TVCast
 
         void SaveAll()
         {
-            SaveSettings(new[] { tvBox.Text, soundBox.Checked ? "1" : "0", fpsBox.Checked ? "120" : "60", controlBox.Checked ? "1" : "0", ipadCode ?? "", SelectedScreen(),
+            SaveSettings(new[] { "", soundBox.Checked ? "1" : "0", fpsBox.Checked ? "120" : "60", controlBox.Checked ? "1" : "0", ipadCode ?? "", SelectedScreen(),
                 webSoundBox.Checked ? "1" : "0", webControlBox.Checked ? "1" : "0" });
         }
 
