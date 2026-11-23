@@ -1790,6 +1790,7 @@ namespace TVCast
             {
                 s.Bind(new IPEndPoint(IPAddress.Any, 0));
                 s.ReceiveTimeout = 200;
+                s.EnableBroadcast = true; // WHO to the home network for PC receivers
                 MemoryStream q = new MemoryStream();
                 q.Write(new byte[] { 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
                 foreach (string label in new[] { "_tvcast", "_udp", "local" })
@@ -1822,6 +1823,9 @@ namespace TVCast
                     // (the gateway of that network) itself
                     foreach (IPAddress gw in WebCast.UsbGateways())
                         try { s.SendTo(new[] { Proto.WHO }, new IPEndPoint(gw, Proto.PORT)); } catch (SocketException) { }
+                    // a PC receiver (Receiver.cs) answers WHO too: ask the whole home network
+                    foreach (IPAddress bc in LanBroadcasts())
+                        try { s.SendTo(new[] { Proto.WHO }, new IPEndPoint(bc, Proto.PORT)); } catch (SocketException) { }
                 };
                 ask();
                 long end = Clock.Ms() + ms, resend = Clock.Ms() + 400;
@@ -1843,6 +1847,36 @@ namespace TVCast
                 }
             }
             return found;
+        }
+
+        /// <summary>the broadcast address of every home network this PC is on (private IPv4)</summary>
+        static List<IPAddress> LanBroadcasts()
+        {
+            List<IPAddress> list = new List<IPAddress>();
+            try
+            {
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    foreach (System.Net.NetworkInformation.UnicastIPAddressInformation u in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (u.Address.AddressFamily != AddressFamily.InterNetwork || u.IPv4Mask == null) continue;
+                        IPAddress bc = Broadcast(u.Address, u.IPv4Mask);
+                        if (bc != null && Proto.IsLanV4(u.Address.GetAddressBytes()) && !list.Contains(bc)) list.Add(bc);
+                    }
+                }
+            }
+            catch (System.Net.NetworkInformation.NetworkInformationException) { }
+            return list;
+        }
+
+        /// <summary>192.168.0.20 / 255.255.255.0 -> 192.168.0.255 (unit-tested); null for a /32</summary>
+        internal static IPAddress Broadcast(IPAddress a, IPAddress mask)
+        {
+            byte[] b = a.GetAddressBytes(), m = mask.GetAddressBytes();
+            if (b.Length != 4 || m.Length != 4 || (m[0] & m[1] & m[2] & m[3]) == 255) return null;
+            for (int i = 0; i < 4; i++) b[i] = (byte)(b[i] | ~m[i]);
+            return new IPAddress(b);
         }
 
         /// <summary>a receiver's NAME answer to WHO, null if the packet is something else</summary>
@@ -1924,6 +1958,8 @@ namespace TVCast
         public static string NoScreen, NoOutput1, ScreenFormat, NoEncoder, EncoderError;
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
         public static string WrongGpuAskNvidia, WrongGpuStuck;
+        public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
+            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2011,6 +2047,21 @@ namespace TVCast
             NoOutput1 = lt ? "IDXGIOutput1 nepalaikomas" : "IDXGIOutput1 is not supported";
             ScreenFormat = lt ? "Ekrano formatas {0} nepalaikomas (išjunkite HDR)" : "Screen format {0} is not supported (turn HDR off)";
             NoEncoder = lt ? "Nerastas H.264 koderis" : "No H.264 encoder found";
+            NoDecoder = lt ? "Nerastas H.264 dekoderis" : "No H.264 decoder found";
+            ReceiverPortBusy = lt ? "Prievadas 47800 užimtas: gal CastLink jau priima kitame lange?" : "Port 47800 is busy: is CastLink already receiving in another window?";
+            ReceiveSection = lt ? "Šis kompiuteris" : "This PC";
+            ReceiveHint = lt ? "Kitas kompiuteris su CastLink gali rodyti savo ekraną čia, per visą šio kompiuterio ekraną."
+                             : "Another PC with CastLink can show its screen here, full screen on this PC.";
+            ReceiveStart = lt ? "Laukti ryšio" : "Wait for a connection";
+            ReceiveStop = lt ? "Nebelaukti" : "Stop receiving";
+            ReceiveWaiting = lt ? "Laukiama ryšio\nKitame kompiuteryje CastLink spausk „Ieškoti“, pasirink „{0}“ ir „Rodyti“."
+                                : "Waiting for a connection\nIn CastLink on the other PC press “Find”, pick “{0}” and “Show”.";
+            ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
+            ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
+            ReceiveAddress = lt ? "Šio kompiuterio vardas: {0}" : "This PC's name: {0}";
+            ReceiveKeys = lt ? "Esc – visas ekranas / langas. Uždarius vaizdo langą rodymas nutraukiamas."
+                             : "Esc: full screen / window. Closing the picture window ends the cast.";
+            ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2336,10 +2387,17 @@ namespace TVCast
         // the browser page's own choices (sound and control can differ per way of showing)
         readonly FlatCheck webSoundBox = new FlatCheck(), webControlBox = new FlatCheck();
         // left menu and its four pages; only the selected page is visible
-        Card appPage, webPage, screensPage;
+        Card appPage, webPage, screensPage, recvPage;
+        // this PC as a receiver (Receiver.cs): the page's button, name and code, the picture window
+        readonly FlatButton recvBtn = new FlatButton();
+        readonly Label recvName = new Label(), recvCode = new Label(), recvKeys = new Label();
+        PcReceiver receiver;
+        ViewerForm viewer;
+        int lastShown;
+        long lastRecvTick;
         Card[] pages;
         NavItem[] nav;
-        Label subtitle, tvLabel, appHint, webHint, screensHint;
+        Label subtitle, tvLabel, appHint, webHint, screensHint, recvHint;
         WebCast web;
         string ipadCode;
         // the status card: the iPad's address and code (iPad mode only), then a dot with the state
@@ -2377,7 +2435,7 @@ namespace TVCast
         // command line, for testing: --tv <ip> --start --log <file> --find --fps N --size WxH --lang en|lt
         //   --ipad (start the iPad mode) --control on|off --port N --no-ask
         readonly string logFile;
-        readonly bool autoStart, findOnly, autoIpad;
+        readonly bool autoStart, findOnly, autoIpad, autoReceive;
         readonly string argControl;
         bool argFps;
         int startPage;
@@ -2399,6 +2457,7 @@ namespace TVCast
                 else if (args[i] == "--control" && i + 1 < args.Length) argControl = args[++i];
                 else if (args[i] == "--lang" && i + 1 < args.Length) Texts.Use(args[++i]);
                 else if (args[i] == "--find") findOnly = true;
+                else if (args[i] == "--receive") autoReceive = true; // tests: start as a receiver
                 else if (args[i] == "--page" && i + 1 < args.Length) startPage = int.Parse(args[++i]); // screenshots
                 else if (args[i] == "--fps" && i + 1 < args.Length) { Caster.FPS = int.Parse(args[++i]); argFps = true; }
                 else if (args[i] == "--size" && i + 1 < args.Length)
@@ -2431,10 +2490,10 @@ namespace TVCast
             PictureBox logo = new PictureBox { Image = AppIcon.Render(Ui.S(36), false), Location = Ui.P(16, 18), Size = new Size(Ui.S(36), Ui.S(36)) };
             Label title = new Label { Text = "CastLink", Font = new Font("Segoe UI Semibold", 14f), Location = Ui.P(60, 20), AutoSize = true };
             subtitle = new Label { Text = Texts.Subtitle, Location = Ui.P(16, 64), Size = new Size(Ui.S(SB - 28), Ui.S(40)), Font = new Font("Segoe UI", 8.5f) };
-            string[] names = { Texts.TvSection, Texts.IpadSection, Texts.ScreensSection };
-            string[] glyphs = { Icons.Phone, Icons.Globe, Icons.Monitor };
-            nav = new NavItem[3];
-            for (int n = 0; n < 3; n++)
+            string[] names = { Texts.TvSection, Texts.IpadSection, Texts.ScreensSection, Texts.ReceiveSection };
+            string[] glyphs = { Icons.Phone, Icons.Globe, Icons.Monitor, Icons.Download };
+            nav = new NavItem[4];
+            for (int n = 0; n < 4; n++)
             {
                 int k = n;
                 nav[n] = new NavItem { Text = names[n], Glyph = glyphs[n], Size = new Size(Ui.S(SB - 24), Ui.S(38)) };
@@ -2445,7 +2504,8 @@ namespace TVCast
             appPage = Page(Texts.TvSection, PX, PW, PH, out appHint, Texts.AppHint);
             webPage = Page(Texts.IpadSection, PX, PW, PH, out webHint, Texts.WebHint);
             screensPage = Page(Texts.ScreensSection, PX, PW, PH, out screensHint, Texts.ScreensHint);
-            pages = new[] { appPage, webPage, screensPage };
+            recvPage = Page(Texts.ReceiveSection, PX, PW, PH, out recvHint, Texts.ReceiveHint);
+            pages = new[] { appPage, webPage, screensPage, recvPage };
 
             // CastLink app (Android phone, tablet or TV)
             tvLabel = new Label { Text = Texts.TvLabel, Location = Ui.P(16, 100), AutoSize = true };
@@ -2524,6 +2584,25 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
+            // this PC as a receiver: its name (what the other PC finds), the pairing code, the button
+            recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
+            recvName.Location = Ui.P(16, 104);
+            recvName.AutoSize = true;
+            recvName.Font = new Font("Segoe UI Semibold", 11f);
+            recvCode.Location = Ui.P(16, 140);
+            recvCode.AutoSize = true;
+            recvCode.Font = new Font("Segoe UI Semibold", 22f);
+            recvKeys.Text = Texts.ReceiveKeys;
+            recvKeys.Location = Ui.P(16, PH - 16 - 42 - 50);
+            recvKeys.Size = new Size(Ui.S(PW - 32), Ui.S(44));
+            recvBtn.Text = Texts.ReceiveStart;
+            recvBtn.Glyph = Icons.Play;
+            recvBtn.Font = goBtn.Font;
+            recvBtn.Location = goBtn.Location;
+            recvBtn.Size = goBtn.Size;
+            recvBtn.Click += delegate { ToggleReceive(); };
+            recvPage.Controls.AddRange(new Control[] { recvName, recvCode, recvKeys, recvBtn });
+
 
             // status card: a dot with the state line, grey details below
             statusCard.SetBounds(Ui.S(PX), Ui.S(M + PH + 12), Ui.S(PW), Ui.S(72));
@@ -2541,7 +2620,7 @@ namespace TVCast
             Controls.Add(statusCard);
             formWidth = Ui.S(W);
             ClientSize = new Size(formWidth, Ui.S(H));
-            ShowPage(Math.Max(0, Math.Min(2, startPage)));
+            ShowPage(Math.Max(0, Math.Min(3, startPage)));
             LayoutStatus();
             ApplyTheme();
             // follow Settings -> Personalization -> Colors while the app is open
@@ -2581,8 +2660,8 @@ namespace TVCast
             IntPtr clickHook = WindowMover.WatchRealClicks(); // ... and one the PC's own mouse picks comes to it
             FormClosed += delegate { WindowMover.Unwatch(fgHook); WindowMover.UnwatchClicks(clickHook); };
             timer.Start();
-            Shown += delegate { if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(); };
-            FormClosing += delegate { MoveWindowsHome(); StopCast(); };
+            Shown += delegate { if (autoReceive) { ShowPage(3); ToggleReceive(); } else if (autoIpad) ToggleIpad(); else if (autoStart) Toggle(); else Search(); };
+            FormClosing += delegate { MoveWindowsHome(); StopCast(); StopReceive(); };
         }
 
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
@@ -2970,6 +3049,70 @@ namespace TVCast
             catch (Exception e) { Say(e.Message, Ui.Danger); }
         }
 
+        /// <summary>this PC as a receiver on / off (Receiver.cs)</summary>
+        void ToggleReceive()
+        {
+            if (receiver != null) { StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); return; }
+            receiver = new PcReceiver();
+            receiver.Start();
+            if (receiver.Error != null) { Say(receiver.Error, Ui.Danger); receiver.Dispose(); receiver = null; return; }
+            recvBtn.Text = Texts.ReceiveStop;
+            recvBtn.Glyph = Icons.Stop;
+            recvBtn.Style(Ui.Danger, Ui.Dark ? Color.Black : Color.White);
+            Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
+        }
+
+        void StopReceive()
+        {
+            CloseViewer();
+            if (receiver != null) receiver.Dispose();
+            receiver = null;
+            recvCode.Text = "";
+            recvBtn.Text = Texts.ReceiveStart;
+            recvBtn.Glyph = Icons.Play;
+            recvBtn.Style(Ui.Accent, Ui.AccentText);
+        }
+
+        void CloseViewer()
+        {
+            ViewerForm v = viewer;
+            viewer = null;
+            if (receiver != null) receiver.Draw = null;
+            if (v != null && !v.IsDisposed) v.Close();
+        }
+
+        /// <summary>every second from Tick: the picture window while a cast arrives, the state line</summary>
+        void ReceiveTick()
+        {
+            PcReceiver r = receiver;
+            if (r == null) return;
+            string code = r.PairCode;
+            recvCode.Text = code ?? "";
+            if (r.Streaming && viewer == null)
+            {
+                viewer = new ViewerForm("CastLink · " + r.CasterName);
+                ViewerForm v = viewer;
+                v.FormClosed += delegate
+                {
+                    // the user closed the picture: this cast ends here (the other PC sees it stop)
+                    if (viewer == v) { viewer = null; StopReceive(); Say(Texts.ReceiveOff, Ui.Idle); }
+                };
+                v.Show();
+                v.Activate();
+                r.Draw = v.ShowFrame;
+            }
+            else if (!r.Streaming && viewer != null) CloseViewer();
+            long now = Clock.Ms();
+            int shown = r.ShownFrames;
+            double fps = (shown - lastShown) / Math.Max(0.5, (now - lastRecvTick) / 1000.0);
+            lastShown = shown;
+            lastRecvTick = now;
+            if (r.Error != null) Say(r.Error, Ui.Danger);
+            else if (code != null) Say(Texts.ReceiveCodeAsk + "\n" + code, Ui.Waiting);
+            else if (r.Streaming) Say(string.Format(Texts.ReceiveShowing, r.CasterName, fps, r.Width, r.Height), Ui.Good);
+            else Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
+        }
+
         void StopCast()
         {
             if (caster != null) caster.Stop();
@@ -3122,7 +3265,7 @@ namespace TVCast
         {
             if (++usbCheck % 2 == 0) CheckUsbInternet(); // every 2 s
             if (caster == null && homeGuard != null) GuardHome();
-            if (caster == null) return;
+            if (caster == null) { ReceiveTick(); return; }
             if (caster.WrongGpu && !askedGpu && !noAsk)
             {
                 askedGpu = true;

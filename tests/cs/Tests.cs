@@ -686,6 +686,75 @@ namespace TVCast.Tests
             Equal(0, MainForm.ParseGpuPreference("GpuPreference="), "broken value");
         }
 
+        // ---- this PC as a receiver (Receiver.cs) ----
+
+        static byte[] Chunk(int frame, int chunk, int count, bool key, params byte[] payload)
+        {
+            byte[] p = new byte[Proto.VIDEO_HEADER + payload.Length];
+            Proto.PutVideoHeader(p, key, frame, chunk, count, 1000 + frame);
+            Buffer.BlockCopy(payload, 0, p, Proto.VIDEO_HEADER, payload.Length);
+            return p;
+        }
+
+        static void TestReceiverPutsChunksTogether()
+        {
+            Assembler a = new Assembler(new byte[] { 9 });
+            byte[] c1 = Chunk(1, 1, 2, true, 3, 4), c0 = Chunk(1, 0, 2, true, new byte[Proto.MAX_PAYLOAD]);
+            True(a.Accept(c1, c1.Length) == null, "half a frame: nothing yet");
+            Assembler.Frame f = a.Accept(c0, c0.Length);
+            True(f != null && f.Key, "chunks in any order make the keyframe");
+            Equal(Proto.MAX_PAYLOAD + 2 + 1, f.Data.Length, "both payloads plus the suffix");
+            Equal(9, (int)f.Data[f.Data.Length - 1], "suffix at the end");
+            Equal(1001L, f.PtsUs, "the frame's pts");
+        }
+
+        static void TestReceiverWaitsForAKeyframeAfterALoss()
+        {
+            Assembler a = new Assembler(new byte[0]);
+            byte[] k = Chunk(1, 0, 1, true, 1);
+            True(a.Accept(k, k.Length) != null && !a.WantsKey, "keyframe 1");
+            byte[] p3 = Chunk(3, 0, 1, false, 3); // frame 2 never came
+            True(a.Accept(p3, p3.Length) == null, "a P-frame after a gap is garbage: dropped");
+            True(a.WantsKey && a.Lost == 1, "asks for a keyframe and counts the loss");
+            byte[] p4 = Chunk(4, 0, 1, false, 4);
+            True(a.Accept(p4, p4.Length) == null, "still waiting for a keyframe");
+            byte[] k5 = Chunk(5, 0, 1, true, 5);
+            True(a.Accept(k5, k5.Length) != null && !a.WantsKey, "a keyframe starts the picture again");
+            byte[] old = Chunk(2, 0, 1, false, 2);
+            True(a.Accept(old, old.Length) == null, "a late chunk of an older frame is ignored");
+        }
+
+        static void TestReceiverRefusesBrokenChunks()
+        {
+            Assembler a = new Assembler(new byte[0]);
+            byte[] bad = Chunk(1, 2, 2, true, 1); // chunk index past the count
+            True(a.Accept(bad, bad.Length) == null, "chunk >= count");
+            byte[] zero = Chunk(1, 0, 0, true, 1);
+            True(a.Accept(zero, zero.Length) == null, "count 0");
+            True(a.Accept(new byte[5], 5) == null, "shorter than the header");
+        }
+
+        static void TestReceiverHelloOkMatchesJava()
+        {
+            byte[] n = new byte[SecureLink.NONCE], e = new byte[SecureLink.POINT], s = new byte[SecureLink.POINT], echo = new byte[SecureLink.NONCE];
+            for (int i = 0; i < n.Length; i++) { n[i] = (byte)(0xA0 + i); echo[i] = (byte)(1 + i); }
+            e[0] = s[0] = 4;
+            byte[] b = SecureLink.MakeHelloOk(n, e, s, echo, true, "PC-1");
+            Equal(SecureLink.HELLO_OK_FIXED + 4, b.Length, "fixed part + the name");
+            Equal((int)SecureLink.HELLO_OK, (int)b[0], "type");
+            Equal(1, (int)b[SecureLink.HELLO_OK_FIXED - 1], "knowsYou byte before the name");
+            SecureLink.Hello h = SecureLink.Parse(b, b.Length);
+            True(h != null && h.KnowsYou && h.Name == "PC-1" && SecureLink.Same(h.Echo, echo) && SecureLink.Same(h.Nonce, n),
+                "the caster reads it back field by field");
+        }
+
+        static void TestFindAsksTheWholeHomeNetwork()
+        {
+            Equal("192.168.0.255", Discovery.Broadcast(IPAddress.Parse("192.168.0.20"), IPAddress.Parse("255.255.255.0")).ToString(), "a /24");
+            Equal("10.0.255.255", Discovery.Broadcast(IPAddress.Parse("10.0.0.5"), IPAddress.Parse("255.255.0.0")).ToString(), "a /16");
+            True(Discovery.Broadcast(IPAddress.Parse("10.0.0.5"), IPAddress.Parse("255.255.255.255")) == null, "a /32 has no broadcast");
+        }
+
         static void TestGpuPreferenceFollowsTheScreensCard()
         {
             Equal(2, MainForm.WantedGpuPreference(true), "a monitor on the NVIDIA card (HDMI): High performance");
