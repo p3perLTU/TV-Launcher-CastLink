@@ -411,7 +411,6 @@ namespace TVCast
         readonly IntPtr mapped = Marshal.AllocHGlobal(16);
         public int W, H, OriginX, OriginY;
         public string ScreenDevice = "";
-        public byte[] Bgra;
         public long LastPresentMicros;
         public string AdapterName = "";
 
@@ -496,7 +495,6 @@ namespace TVCast
 
                 Marshal.Copy(new int[] { W, H, 1, 1, 87, 1, 0, 3 /*STAGING*/, 0, 0x20000 /*CPU READ*/, 0 }, 0, desc, 11);
                 Com.Check(Com.F<D_CreateTex>(device, 5)(device, desc, IntPtr.Zero, out staging), "CreateTexture2D");
-                Bgra = new byte[W * H * 4];
             }
             finally
             {
@@ -519,15 +517,12 @@ namespace TVCast
                 long present = Marshal.ReadInt64(frameInfo, 0);
                 int accumulated = Marshal.ReadInt32(frameInfo, 16);
                 if (accumulated == 0) return 0; // only the pointer moved
+                // only a copy on the GPU here: a 144 Hz screen gives 144 pictures a second and
+                // reading each one into memory (8 MB at 1080p) held the sender at ~86 fps; the
+                // CPU reads the picture only when it is sent (ConvertTo)
                 IntPtr tex = Com.QI(res, IID_Texture2D);
                 Com.F<D_Copy>(ctx, 47)(ctx, staging, tex); // CopyResource
                 Com.Release(ref tex);
-                Com.Check(Com.F<D_Map>(ctx, 14)(ctx, staging, 0, 1 /*READ*/, 0, mapped), "Map");
-                IntPtr p = Marshal.ReadIntPtr(mapped, 0);
-                int pitch = Marshal.ReadInt32(mapped, IntPtr.Size);
-                int row = W * 4;
-                for (int y = 0; y < H; y++) Marshal.Copy(p + y * pitch, Bgra, y * row, row);
-                Com.F<D_Unmap>(ctx, 15)(ctx, staging, 0);
                 LastPresentMicros = present != 0 ? Clock.QpcToMicros(present) : Clock.Micros();
                 return 1;
             }
@@ -536,6 +531,20 @@ namespace TVCast
                 Com.Release(ref res);
                 Com.F<D_Self>(dup, 14)(dup); // ReleaseFrame
             }
+        }
+
+        /// <summary>the last picture as NV12 (dw x dh) with the pointer drawn in, read straight
+        /// from the staging texture</summary>
+        public void ConvertTo(IntPtr dst, int dw, int dh, Pointer p)
+        {
+            Com.Check(Com.F<D_Map>(ctx, 14)(ctx, staging, 0, 1 /*READ*/, 0, mapped), "Map");
+            try
+            {
+                IntPtr src = Marshal.ReadIntPtr(mapped, 0);
+                int pitch = Marshal.ReadInt32(mapped, IntPtr.Size);
+                Nv12.Convert(src, pitch, W, H, dst, dw, dh, p);
+            }
+            finally { Com.F<D_Unmap>(ctx, 15)(ctx, staging, 0); }
         }
 
         public void Dispose()
@@ -649,13 +658,19 @@ namespace TVCast
         }
 
         /// <summary>the same into memory the encoder owns (its input buffer, filled ahead of time)</summary>
-        public static unsafe void Convert(byte[] src, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
+        public static void Convert(byte[] src, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
+        {
+            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned);
+            try { Convert(hs.AddrOfPinnedObject(), sw * 4, sw, sh, pd, dw, dh, p); }
+            finally { hs.Free(); }
+        }
+
+        /// <summary>the core: BGRA rows of "pitch" bytes (a mapped texture) -> NV12</summary>
+        public static unsafe void Convert(IntPtr ps, int pitch, int sw, int sh, IntPtr pd, int dw, int dh, Pointer p)
         {
             int[] xs = new int[dw], ys = new int[dh];
             for (int x = 0; x < dw; x++) xs[x] = (int)((long)x * sw / dw);
             for (int y = 0; y < dh; y++) ys[y] = (int)((long)y * sh / dh);
-            GCHandle hs = GCHandle.Alloc(src, GCHandleType.Pinned);
-            IntPtr ps = hs.AddrOfPinnedObject();
             bool cur = p != null && p.Visible && p.Px != null;
             int cx = cur ? p.X : 0, cy = cur ? p.Y : 0, cw = cur ? p.W : 0, ch = cur ? p.H : 0;
             byte[] cpx = cur ? p.Px : null;
@@ -673,7 +688,7 @@ namespace TVCast
                         {
                             int x = bx * 2 + (k & 1), y = by * 2 + (k >> 1);
                             int sx = xs[x], sy = ys[y];
-                            byte* q = s + ((long)sy * sw + sx) * 4;
+                            byte* q = s + (long)sy * pitch + (long)sx * 4;
                             int b = q[0], g = q[1], r = q[2];
                             if (cur && sx >= cx && sy >= cy && sx < cx + cw && sy < cy + ch)
                             {
@@ -692,10 +707,7 @@ namespace TVCast
                     }
                 });
             }
-            finally
-            {
-                hs.Free();
-            }
+            finally { }
         }
     }
 
@@ -745,6 +757,10 @@ namespace TVCast
         uint outSize;
         readonly int w, h, fps;
         int credits;
+        Thread pumpThread;
+        volatile bool pumping;
+        volatile Exception pumpError;
+        FrameHandler pumpTo;
         byte[] csd;
         public readonly string Name;
         public readonly bool Hardware;
@@ -915,7 +931,7 @@ namespace TVCast
         }
 
         /// <summary>An async (hardware) encoder takes a frame only after asking for one.</summary>
-        public bool CanTakeInput { get { return !async || credits > 0; } }
+        public bool CanTakeInput { get { return !async || Volatile.Read(ref credits) > 0; } }
 
         public void Input(byte[] nv12, long ptsMicros, bool forceKey)
         {
@@ -955,32 +971,67 @@ namespace TVCast
             int hr = Com.F<D_PIn>(mft, 24)(mft, 0, sample, 0);
             Com.Release(ref sample);
             Com.Check(hr, "ProcessInput");
-            if (async) credits--;
+            if (async) Interlocked.Decrement(ref credits);
         }
 
         public delegate void FrameHandler(byte[] data, int len, bool key, long ptsMicros);
 
-        /// <summary>Hands every finished frame to onFrame. Never blocks.</summary>
+        /// <summary>Hands every finished frame to onFrame. Never blocks. With a background
+        /// output thread running it only reports that thread's error.</summary>
         public void Pump(FrameHandler onFrame)
         {
+            if (pumpThread != null)
+            {
+                Exception e = pumpError;
+                if (e != null) throw new Exception(e.Message, e);
+                return;
+            }
             if (!async)
             {
                 while (Drain(onFrame) >= 0) { }
                 return;
             }
-            while (true)
+            while (PumpOnce(onFrame)) { }
+        }
+
+        /// <summary>one encoder event; false when there was none</summary>
+        bool PumpOnce(FrameHandler onFrame)
+        {
+            IntPtr ev;
+            int hr = Com.F<D_GetEvent>(events, 3)(events, 1 /*NO_WAIT*/, out ev);
+            if (hr == MF_E_NO_EVENTS) return false;
+            Com.Check(hr, "GetEvent");
+            uint type;
+            Com.F<D_GetEvType>(ev, 33)(ev, out type);
+            Com.Release(ref ev);
+            if (type == 601) Interlocked.Increment(ref credits); // METransformNeedInput
+            else if (type == 602) Drain(onFrame); // METransformHaveOutput
+            else if (type == 1) throw new Exception(Texts.EncoderError);
+            return true;
+        }
+
+        /// <summary>Takes the finished frames on a thread of their own: with the AMD encoder
+        /// ProcessOutput waited ~4.5 ms a frame for the GPU, time the capture loop could not
+        /// prepare the next frame in (held a 144 Hz screen at ~95 fps). Async (hardware)
+        /// encoders only; onFrame then runs on that thread.</summary>
+        public void PumpInBackground(FrameHandler onFrame)
+        {
+            if (!async || pumpThread != null) return;
+            pumpTo = onFrame;
+            pumping = true;
+            pumpThread = new Thread(PumpLoop) { IsBackground = true, Name = "encoder output", Priority = ThreadPriority.AboveNormal };
+            pumpThread.Start();
+        }
+
+        void PumpLoop()
+        {
+            Native.CoInitializeEx(IntPtr.Zero, 0); // MTA, like the thread that made the encoder
+            try
             {
-                IntPtr ev;
-                int hr = Com.F<D_GetEvent>(events, 3)(events, 1 /*NO_WAIT*/, out ev);
-                if (hr == MF_E_NO_EVENTS) return;
-                Com.Check(hr, "GetEvent");
-                uint type;
-                Com.F<D_GetEvType>(ev, 33)(ev, out type);
-                Com.Release(ref ev);
-                if (type == 601) credits++; // METransformNeedInput
-                else if (type == 602) Drain(onFrame); // METransformHaveOutput
-                else if (type == 1) throw new Exception(Texts.EncoderError);
+                while (pumping)
+                    if (!PumpOnce(pumpTo)) Thread.Sleep(1);
             }
+            catch (Exception e) { pumpError = e; }
         }
 
         byte[] outBuf = new byte[1 << 20];
@@ -1057,6 +1108,8 @@ namespace TVCast
 
         public void Dispose()
         {
+            pumping = false;
+            if (pumpThread != null) pumpThread.Join(1000);
             if (mft != IntPtr.Zero)
             {
                 Com.F<D_Msg>(mft, 23)(mft, 0x10000001, IntPtr.Zero); // END_OF_STREAM
@@ -1144,7 +1197,7 @@ namespace TVCast
         public volatile string EncoderName = "";
         public long Frames, Bytes;
         // diagnostics: encoder latency (input -> output, same pts) and NV12 conversion time, summed
-        public long EncNs, EncN, ConvNs, ConvN;
+        public long EncNs, EncN, ConvNs, ConvN, WaitNs, InNs, Pictures, SendNs; // log: where a frame's time goes
         public volatile string FirstKeyHex = "";
         readonly Dictionary<long, long> inputAt = new Dictionary<long, long>();
 
@@ -1409,13 +1462,16 @@ namespace TVCast
         void SendFrame(byte[] data, int len, bool key, long pts)
         {
             long t0;
-            if (inputAt.TryGetValue(pts, out t0))
+            lock (inputAt)
             {
-                inputAt.Remove(pts);
-                Interlocked.Add(ref EncNs, Clock.Nanos() - t0);
-                Interlocked.Increment(ref EncN);
+                if (inputAt.TryGetValue(pts, out t0))
+                {
+                    inputAt.Remove(pts);
+                    Interlocked.Add(ref EncNs, Clock.Nanos() - t0);
+                    Interlocked.Increment(ref EncN);
+                }
+                if (inputAt.Count > 100) inputAt.Clear();
             }
-            if (inputAt.Count > 100) inputAt.Clear();
             if (key && FirstKeyHex.Length == 0)
             {
                 StringBuilder sb = new StringBuilder();
@@ -1432,6 +1488,7 @@ namespace TVCast
             int count = Proto.VideoChunks(len);
             if (count < 0) return;
             byte[] pkt = new byte[Proto.VIDEO_HEADER + Proto.MAX_PAYLOAD];
+            long s0 = Clock.Nanos();
             lock (sendLock)
             {
                 int id = frameId++;
@@ -1443,6 +1500,7 @@ namespace TVCast
                     Send(pkt, Proto.VIDEO_HEADER + l);
                 }
             }
+            Interlocked.Add(ref SendNs, Clock.Nanos() - s0);
             Interlocked.Increment(ref Frames);
             Interlocked.Add(ref Bytes, len);
         }
@@ -1516,6 +1574,7 @@ namespace TVCast
                 using (Encoder enc = new Encoder(w, h, fps, rate, web != null ? 66 : 100))
                 {
                     EncoderName = enc.Name + (enc.Hardware ? "" : Texts.Software);
+                    enc.PumpInBackground(SendFrame);
                     vw = w;
                     vh = h;
                     if (web != null) web.SetSize(w, h);
@@ -1527,13 +1586,13 @@ namespace TVCast
                     // is still busy with the last one: capture + conversion no longer add to each
                     // frame's time (the AMD encoder went from ~93 to its own ~120 a second)
                     IntPtr ready = IntPtr.Zero;
-                    long readyPts = 0, readyAt = 0;
+                    long readyPts = 0, readyAt = 0, lead = 3000; // lead: how long preparing a frame takes (us), so it starts that much before its slot
                     try
                     {
                     while (on && !restartVideo)
                     {
                         int got = cap.Acquire(2);
-                        if (got == 1) { dirty = true; have = true; pts = cap.LastPresentMicros; }
+                        if (got == 1) { dirty = true; have = true; pts = cap.LastPresentMicros; Interlocked.Increment(ref Pictures); }
                         if (ptr.Update(cap.OriginX, cap.OriginY) && have) { dirty = true; pts = Clock.Micros(); }
                         enc.Pump(SendFrame);
                         long now = Clock.Micros();
@@ -1543,16 +1602,17 @@ namespace TVCast
                         // changed" frames): with 5-6 fps Safari's player ran out of picture and stopped
                         // for up to 10 s, waiting for enough to play.
                         bool webIdle = web != null && have && now - lastEncode > 100000;
-                        if (((dirty && now >= nextSlot) || keyIdle || webIdle) && ready == IntPtr.Zero)
+                        if (((dirty && now >= nextSlot - lead) || keyIdle || webIdle) && ready == IntPtr.Zero)
                         {
                             long c0 = Clock.Nanos();
                             IntPtr buf, data;
                             enc.NewFrame(nv12.Length, out buf, out data);
-                            try { Nv12.Convert(cap.Bgra, cap.W, cap.H, data, w, h, ptr); }
+                            try { cap.ConvertTo(data, w, h, ptr); }
                             catch { Com.F<D_Self>(buf, 4)(buf); Com.Release(ref buf); throw; }
                             long c1 = Clock.Nanos();
                             Interlocked.Add(ref ConvNs, c1 - c0);
                             Interlocked.Increment(ref ConvN);
+                            lead = Math.Min(1000000 / fps, (lead * 7 + (c1 - c0) / 1000 + 1000) / 8); // smoothed, plus 1 ms to spare
                             if (!dirty) pts = Clock.Micros();
                             ready = enc.FinishFrame(buf, nv12.Length, pts);
                             readyPts = pts;
@@ -1564,8 +1624,11 @@ namespace TVCast
                         {
                             bool key = keyWanted;
                             keyWanted = false;
-                            inputAt[readyPts] = readyAt;
+                            lock (inputAt) inputAt[readyPts] = readyAt;
+                            long i0 = Clock.Nanos();
+                            Interlocked.Add(ref WaitNs, i0 - readyAt);
                             enc.InputSample(ref ready, key);
+                            Interlocked.Add(ref InNs, Clock.Nanos() - i0);
                             // even spacing: running late skips a slot instead of sending two frames
                             // close together (a burst leaves the TV decoder one frame behind for seconds)
                             nextSlot += 1000000 / fps;
@@ -3850,6 +3913,9 @@ namespace TVCast
                 long en = Interlocked.Exchange(ref caster.EncN, 0), es = Interlocked.Exchange(ref caster.EncNs, 0);
                 long cn = Interlocked.Exchange(ref caster.ConvN, 0), cs = Interlocked.Exchange(ref caster.ConvNs, 0);
                 string diag = string.Format(" | encoder {0:0.0} ms, NV12 {1:0.0} ms", en > 0 ? es / 1e6 / en : 0, cn > 0 ? cs / 1e6 / cn : 0);
+                long wn = Interlocked.Exchange(ref caster.WaitNs, 0), inn = Interlocked.Exchange(ref caster.InNs, 0), sn = Interlocked.Exchange(ref caster.SendNs, 0);
+                diag += string.Format(" | screen {0}/s", Interlocked.Exchange(ref caster.Pictures, 0));
+                if (cn > 0) diag += string.Format(" (per frame: ready-to-input {0:0.0}, input {1:0.0}, send {2:0.0} ms)", wn / 1e6 / cn, inn / 1e6 / cn, sn / 1e6 / cn);
                 if (caster.FirstKeyHex.Length > 0) { diag += " | key " + caster.FirstKeyHex; caster.FirstKeyHex = "-"; }
                 if (web == null) diag += " | via " + (caster.Usb ? "USB" : "Wi-Fi") + ", moves " + caster.Moves + ", search " + caster.RouteNote + ", heard " + Interlocked.Read(ref caster.Heard) + " " + caster.RecvError;
                 try { File.AppendAllText(logFile, DateTime.Now.ToString("HH:mm:ss ") + line.Replace('\n', ' ') + diag + Environment.NewLine); }
