@@ -2110,7 +2110,7 @@ namespace TVCast
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
-            PcSound = lt ? "Garsas pirmame" : "Sound on the first";
+            PcSound = lt ? "Leisti garsą" : "Allow sound";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
