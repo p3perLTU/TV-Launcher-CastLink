@@ -43,6 +43,8 @@ public final class Proto {
     public static final byte WHO = 15;
     public static final byte NAME = 16;
     public static final byte INFO = 17;
+    /** a phone receiver's answer to WHO: like NAME, so the PC shows a phone icon */
+    public static final byte PHONENAME = 19;
     public static final int CONFIG_CONTROL = 1;
     public static final int TOKEN_BYTES = 8;
     /** CONFIG with the control flag and the token */

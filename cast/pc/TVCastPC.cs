@@ -34,7 +34,7 @@ namespace TVCast
         public const int PORT = 47800;
         public const byte CONFIG = 1, VIDEO = 2, AUDIO = 3, KEYREQ = 10, BYE = 11, PING = 12, PONG = 13, INPUT = 14, WHO = 15, NAME = 16, INFO = 17;
         /// <summary>a PC receiver's answer to WHO (Receiver.cs): like NAME, so the window lists PCs apart</summary>
-        public const byte PCNAME = 18;
+        public const byte PCNAME = 18, PHONENAME = 19;
         public const int CONFIG_CONTROL = 1, TOKEN_BYTES = 8, CONFIG_LONG = 14 + 1 + TOKEN_BYTES;
         public const int FLAG_KEY = 1;
         public const int VIDEO_HEADER = 1 + 1 + 4 + 2 + 2 + 8;
@@ -1812,7 +1812,8 @@ namespace TVCast
     static class Discovery
     {
         // addresses that answered as a PC receiver (PCNAME): the window lists those apart from TVs and phones
-        static readonly HashSet<IPAddress> pcs = new HashSet<IPAddress>();
+        static readonly HashSet<IPAddress> pcs = new HashSet<IPAddress>(), phones = new HashSet<IPAddress>();
+        public static bool IsPhone(IPAddress a) { lock (phones) return a != null && phones.Contains(a); }
 
         /// <summary>this address answered as a PC receiver</summary>
         public static bool IsPc(IPAddress a) { lock (pcs) return a != null && pcs.Contains(a); }
@@ -1879,6 +1880,7 @@ namespace TVCast
                     bool pc = src.Port == Proto.PORT && buf[0] == Proto.PCNAME;
                     if (pc && own.Contains(ip)) continue; // this PC's own receiver
                     if (pc) lock (pcs) pcs.Add(ip);
+                    if (src.Port == Proto.PORT && buf[0] == Proto.PHONENAME) lock (phones) phones.Add(ip);
                     bool dup = false;
                     foreach (KeyValuePair<string, IPAddress> f in found) dup |= f.Value.Equals(ip);
                     if (!dup) found.Add(new KeyValuePair<string, IPAddress>(name, ip));
@@ -1920,7 +1922,7 @@ namespace TVCast
         /// <summary>a receiver's NAME answer to WHO, null if the packet is something else</summary>
         internal static string NameReply(byte[] b, int n)
         {
-            if (n < 2 || (b[0] != Proto.NAME && b[0] != Proto.PCNAME)) return null;
+            if (n < 2 || (b[0] != Proto.NAME && b[0] != Proto.PCNAME && b[0] != Proto.PHONENAME)) return null;
             string name = Encoding.UTF8.GetString(b, 1, n - 1).Trim();
             return name.Length > 0 ? name : null;
         }
@@ -3038,6 +3040,9 @@ namespace TVCast
         static string GlyphFor(string name, bool pc)
         {
             if (pc) return Icons.Pc;
+            int open = name.LastIndexOf(" (", StringComparison.Ordinal);
+            IPAddress ip;
+            if (open > 0 && IPAddress.TryParse(name.Substring(open + 2).TrimEnd(')'), out ip) && Discovery.IsPhone(ip)) return Icons.Phone;
             string n = name.ToUpperInvariant();
             return n.StartsWith("SM-") || n.Contains("PHONE") || n.Contains("PIXEL") || n.Contains("TELEFON") || n.Contains("USB") ? Icons.Phone : Icons.Monitor;
         }

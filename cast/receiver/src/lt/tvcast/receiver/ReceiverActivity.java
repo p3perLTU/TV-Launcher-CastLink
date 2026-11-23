@@ -1264,7 +1264,7 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         String name = nsdName != null ? nsdName : deviceName();
         byte[] n = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] out = new byte[1 + Math.min(n.length, 255)];
-        out[0] = Proto.NAME;
+        out[0] = onPhone ? Proto.PHONENAME : Proto.NAME;
         System.arraycopy(n, 0, out, 1, out.length - 1);
         try {
             socket.send(new DatagramPacket(out, out.length, p.getSocketAddress()));
