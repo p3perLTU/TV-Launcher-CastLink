@@ -1998,7 +1998,7 @@ namespace TVCast
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, PcPageTitle, ReceiveStart, ReceiveStop,
             ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
-            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl;
+            SendHeader, GetHeader, ShowPc, SendSub, GetSub, PcControl, PcSearching;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2106,6 +2106,7 @@ namespace TVCast
             SendHeader = lt ? "Antras kompiuteris" : "Second PC";
             GetHeader = lt ? "Pirmas kompiuteris" : "First PC";
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
+            PcSearching = lt ? "Ieškoma… Pirmame kompiuteryje spausk „Laukti ryšio“." : "Looking… On the first PC press “Wait for a connection”.";
             SendSub = lt ? "Jo ekraną matysi pirmame" : "Its screen shows on the first";
             GetSub = lt ? "Prie jo sėdi ir matai antrą" : "You sit here and see the second";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
@@ -2356,6 +2357,53 @@ namespace TVCast
         }
     }
 
+    /// <summary>one found device: icon tile, name and address, highlighted when picked</summary>
+    sealed class DeviceRow : Control
+    {
+        public string Title = "", Sub = "";
+        bool selected, hover;
+        public bool Selected { get { return selected; } set { selected = value; Invalidate(); } }
+
+        public DeviceRow()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Page);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            Color fill = selected ? Ui.Mix(Ui.CardBg, Ui.Accent, 0.22f) : hover && Enabled ? Ui.Mix(Ui.CardBg, Ui.Ink, 0.06f) : Ui.CardBg;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), Ui.S(8)))
+            using (SolidBrush b = new SolidBrush(fill))
+            using (Pen pen = new Pen(selected ? Ui.Accent : Ui.Border, selected ? 1.5f : 1f))
+            {
+                g.FillPath(b, p);
+                g.DrawPath(pen, p);
+            }
+            int t = Ui.S(30), x = Ui.S(8), y = (Height - t) / 2;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(x, y, t, t), t * 0.26f))
+            using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
+                new PointF(x, y), new PointF(x + t, y + t), Color.FromArgb(56, 132, 255), Color.FromArgb(124, 77, 255)))
+                g.FillPath(b, p);
+            TextRenderer.DrawText(g, Icons.Monitor, Icons.Font(11f), new Rectangle(x, y, t, t), Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            int tx = x + t + Ui.S(10), tw = Width - tx - Ui.S(8);
+            using (Font bold = new Font("Segoe UI Semibold", 9.5f))
+                TextRenderer.DrawText(g, Title, bold, new Rectangle(tx, Ui.S(5), tw, Ui.S(19)), Enabled ? Ui.Ink : Ui.Muted,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            using (Font small = new Font("Segoe UI", 8.5f))
+                TextRenderer.DrawText(g, Sub, small, new Rectangle(tx, Ui.S(24), tw, Ui.S(16)), Ui.Muted,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        }
+    }
+
     /// <summary>a rounded colour tile with a white icon, the badge of a card's title</summary>
     sealed class GlyphTile : Control
     {
@@ -2466,6 +2514,7 @@ namespace TVCast
         readonly Label recvName = new Label(), recvCode = new Label(), recvKeys = new Label();
         // ... and the top half: send this screen to another PC (PCs found by the search are listed only here)
         readonly ComboBox pcBox = new ComboBox();
+        readonly Panel pcList = new Panel();
         readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
         readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck();
         readonly Label sendHeader = new Label(), getHeader = new Label(), sendDir = new Label(), getDir = new Label();
@@ -2680,28 +2729,32 @@ namespace TVCast
             sendDir.Font = dirFont;
             sendDir.AutoEllipsis = true;
             sendDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
-            pcBox.Location = Ui.P(14, 68);
-            pcBox.Width = Ui.S(CI - 40);
+            // found PCs as tiles (icon, name, address) like in the phone app; the hidden box
+            // keeps the picked entry for the cast code
+            pcBox.Visible = false;
+            pcList.SetBounds(Ui.S(14), Ui.S(64), Ui.S(CI), Ui.S(94));
+            pcList.AutoScroll = true;
+            pcBox.SelectedIndexChanged += delegate { ShowPcRows(); };
             pcFindBtn.Text = "";
             pcFindBtn.Glyph = Icons.Search;
-            pcFindBtn.Location = Ui.P(14 + CI - 34, 66);
-            pcFindBtn.Size = new Size(Ui.S(34), Ui.S(32));
+            pcFindBtn.Location = Ui.P(14, CH - 14 - 38);
+            pcFindBtn.Size = new Size(Ui.S(38), Ui.S(38));
             pcFindBtn.Click += delegate { Search(); };
             new ToolTip().SetToolTip(pcFindBtn, Texts.Find);
             pcSoundBox.Text = Texts.Sound;
             pcSoundBox.Glyph = Icons.Volume;
-            pcSoundBox.Location = Ui.P(14, 108);
+            pcSoundBox.Location = Ui.P(14, 164);
             pcControlBox.Text = Texts.PcControl;
             pcControlBox.Glyph = Icons.Touch;
-            pcControlBox.Location = Ui.P(14, 136);
+            pcControlBox.Location = Ui.P(14, 190);
             pcSoundBox.Checked = pcControlBox.Checked = true;
             pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
             pcBox.TextChanged += delegate { ShowDirections(); };
             pcGoBtn.Text = Texts.ShowPc;
             pcGoBtn.Glyph = Icons.Play;
             pcGoBtn.Font = goBtn.Font;
-            pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
-            pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
+            pcGoBtn.Location = Ui.P(14 + 46, CH - 14 - 38);
+            pcGoBtn.Size = new Size(Ui.S(CI - 46), Ui.S(38));
             pcGoBtn.Click += delegate { Toggle(true); };
             GlyphTile sendTile = new GlyphTile { Glyph = "2", From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
             sendTile.GlyphFont = new Font("Segoe UI Semibold", 15f);
@@ -2709,7 +2762,7 @@ namespace TVCast
             GlyphTile getTile = new GlyphTile { Glyph = "1", From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
             getTile.GlyphFont = sendTile.GlyphFont;
             getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
-            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
+            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcList, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
             getHeader.Location = Ui.P(62, 12);
@@ -2733,6 +2786,7 @@ namespace TVCast
             recvBtn.Click += delegate { ToggleReceive(); };
             getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, recvName, recvCode, recvKeys, recvBtn });
             recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
+            ShowPcRows();
             ShowDirections();
 
 
@@ -2803,6 +2857,7 @@ namespace TVCast
         /// <summary>a running cast's button is red ("Stop"), the others use the accent colour</summary>
         void StyleButtons()
         {
+            foreach (Control c in pcList.Controls) c.Enabled = !(caster != null && castToPc); // no other pick while casting to a PC
             findBtn.Style(Ui.Subtle, Ui.Ink);
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
@@ -2831,7 +2886,8 @@ namespace TVCast
             foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle,
                 pcSoundBox, pcControlBox, recvName, recvCode, sendHeader, getHeader }) c.ForeColor = Ui.Ink;
             foreach (Control c in new Control[] { sendDir, getDir, recvKeys }) c.ForeColor = Ui.Muted;
-            sendCard.BackColor = getCard.BackColor = Ui.Field;
+            sendCard.BackColor = getCard.BackColor = pcList.BackColor = Ui.Field;
+            ShowPcRows();
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
             tvBox.BackColor = screenBox.BackColor = pcBox.BackColor = Ui.Field;
@@ -2934,6 +2990,42 @@ namespace TVCast
         bool searching;
         int pcSearchWait;
 
+        /// <summary>draws the found PCs as tiles; a click picks one, a double click shows this screen there</summary>
+        void ShowPcRows()
+        {
+            pcList.SuspendLayout();
+            Control[] old = new Control[pcList.Controls.Count];
+            pcList.Controls.CopyTo(old, 0);
+            foreach (Control c in old) c.Dispose();
+            if (pcBox.Items.Count == 0)
+            {
+                Label empty = new Label { Text = Texts.PcSearching, ForeColor = Ui.Muted, AutoSize = false };
+                empty.SetBounds(0, Ui.S(6), pcList.Width, Ui.S(60));
+                pcList.Controls.Add(empty);
+            }
+            bool locked = caster != null && castToPc;
+            int w = pcList.Width - (pcBox.Items.Count > 2 ? SystemInformation.VerticalScrollBarWidth : 0);
+            for (int i = 0; i < pcBox.Items.Count; i++)
+            {
+                string entry = pcBox.Items[i].ToString();
+                string name = Caster.NameOf(entry) ?? entry;
+                int open = entry.LastIndexOf(" (", StringComparison.Ordinal);
+                DeviceRow row = new DeviceRow
+                {
+                    Title = name,
+                    Sub = open > 0 ? entry.Substring(open + 2).TrimEnd(')') : "",
+                    Selected = i == pcBox.SelectedIndex,
+                    Enabled = !locked
+                };
+                row.SetBounds(0, i * Ui.S(50), w, Ui.S(44));
+                int index = i;
+                row.Click += delegate { if (pcBox.SelectedIndex != index) pcBox.SelectedIndex = index; };
+                row.DoubleClick += delegate { if (caster == null && receiver == null) { pcBox.SelectedIndex = index; Toggle(true); } };
+                pcList.Controls.Add(row);
+            }
+            pcList.ResumeLayout();
+        }
+
         /// <summary>while the PC page is open and no PC is listed, look again every few seconds in
         /// the background, so the first PC shows up by itself once it waits for a connection</summary>
         void AutoFindPcs()
@@ -2975,6 +3067,7 @@ namespace TVCast
                         int keep = pcBox.Items.IndexOf(prevPc);
                         pcBox.SelectedIndex = keep >= 0 ? keep : 0;
                     }
+                    ShowPcRows();
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
