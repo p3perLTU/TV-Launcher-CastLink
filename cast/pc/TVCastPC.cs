@@ -457,8 +457,12 @@ namespace TVCast
 
                 int level;
                 // driver type UNKNOWN because the adapter is given; BGRA support
-                Com.Check(Native.D3D11CreateDevice(pickAdapter, 0, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7,
-                    out device, out level, out ctx), "D3D11CreateDevice");
+                int made = Native.D3D11CreateDevice(pickAdapter, 0, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out level, out ctx);
+                // a screen owned by an adapter that cannot render (seen on another PC: a virtual
+                // display driver's own adapter, 0x8876017C): use Windows' default GPU instead;
+                // DuplicateOutput below then says whether that GPU may copy this screen
+                if (made < 0) made = Native.D3D11CreateDevice(IntPtr.Zero, 1 /*HARDWARE*/, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out level, out ctx);
+                Com.Check(made, "D3D11CreateDevice (" + AdapterName + ")");
                 // The process is per-monitor DPI aware (so the pointer lands right on a scaled
                 // screen), and for such processes IDXGIOutput1::DuplicateOutput fails with
                 // DXGI_ERROR_UNSUPPORTED on a scaled (e.g. 125 %) screen: IDXGIOutput5::
