@@ -33,6 +33,8 @@ namespace TVCast
     {
         public const int PORT = 47800;
         public const byte CONFIG = 1, VIDEO = 2, AUDIO = 3, KEYREQ = 10, BYE = 11, PING = 12, PONG = 13, INPUT = 14, WHO = 15, NAME = 16, INFO = 17;
+        /// <summary>a PC receiver's answer to WHO (Receiver.cs): like NAME, so the window lists PCs apart</summary>
+        public const byte PCNAME = 18;
         public const int CONFIG_CONTROL = 1, TOKEN_BYTES = 8, CONFIG_LONG = 14 + 1 + TOKEN_BYTES;
         public const int FLAG_KEY = 1;
         public const int VIDEO_HEADER = 1 + 1 + 4 + 2 + 2 + 8;
@@ -1809,9 +1811,16 @@ namespace TVCast
 
     static class Discovery
     {
+        // addresses that answered as a PC receiver (PCNAME): the window lists those apart from TVs and phones
+        static readonly HashSet<IPAddress> pcs = new HashSet<IPAddress>();
+
+        /// <summary>this address answered as a PC receiver</summary>
+        public static bool IsPc(IPAddress a) { lock (pcs) return a != null && pcs.Contains(a); }
+
         public static List<KeyValuePair<string, IPAddress>> Find(int ms)
         {
             List<KeyValuePair<string, IPAddress>> found = new List<KeyValuePair<string, IPAddress>>();
+            List<IPAddress> own = WebCast.UpIPv4(false);
             using (Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
             {
                 s.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -1867,6 +1876,9 @@ namespace TVCast
                     string name = src.Port == Proto.PORT ? NameReply(buf, n) : InstanceName(buf, n);
                     if (name == null) continue;
                     IPAddress ip = src.Address;
+                    bool pc = src.Port == Proto.PORT && buf[0] == Proto.PCNAME;
+                    if (pc && own.Contains(ip)) continue; // this PC's own receiver
+                    if (pc) lock (pcs) pcs.Add(ip);
                     bool dup = false;
                     foreach (KeyValuePair<string, IPAddress> f in found) dup |= f.Value.Equals(ip);
                     if (!dup) found.Add(new KeyValuePair<string, IPAddress>(name, ip));
@@ -1908,7 +1920,7 @@ namespace TVCast
         /// <summary>a receiver's NAME answer to WHO, null if the packet is something else</summary>
         internal static string NameReply(byte[] b, int n)
         {
-            if (n < 2 || b[0] != Proto.NAME) return null;
+            if (n < 2 || (b[0] != Proto.NAME && b[0] != Proto.PCNAME)) return null;
             string name = Encoding.UTF8.GetString(b, 1, n - 1).Trim();
             return name.Length > 0 ? name : null;
         }
@@ -1985,7 +1997,8 @@ namespace TVCast
         public static string ShowIpad, AllowControl, IpadOpen, IpadCode, IpadWaiting, IpadConnected, PortBusy;
         public static string WrongGpuAskNvidia, WrongGpuStuck;
         public static string NoDecoder, ReceiverPortBusy, ReceiveSection, ReceiveHint, ReceiveStart, ReceiveStop,
-            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets;
+            ReceiveWaiting, ReceiveShowing, ReceiveCodeAsk, ReceiveAddress, ReceiveKeys, ReceiveOff, ReceivePackets,
+            SendHeader, GetHeader, ShowPc;
         public static string AddScreen, DisplaySettings, ExtendTitle, ExtendSteps, UsbInternetAsk, UsbInternetDone, WrongGpu, WrongGpuAsk, FastGpuAsk, ViewerSlow, ViewerLeft, CodeWrong, CodeLocked, CaPrint;
 
         static Texts() { Use(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName); }
@@ -2085,10 +2098,13 @@ namespace TVCast
             ReceiveShowing = lt ? "Rodoma iš {0} · {1:0} kadr./s · {2}×{3}" : "Showing {0} · {1:0} frames/s · {2}×{3}";
             ReceiveCodeAsk = lt ? "Patvirtink kodą kitame kompiuteryje" : "Confirm the code on the other PC";
             ReceiveAddress = lt ? "Šio kompiuterio vardas: {0}" : "This PC's name: {0}";
-            ReceiveKeys = lt ? "Jei kitas kompiuteris leidžia valdyti, pelė ir visa klaviatūra (ir Alt+Tab, Win) valdo jį. Ctrl+Alt+Enter – visas ekranas / langas."
-                             : "If the other PC allows control, the mouse and the whole keyboard (Alt+Tab and Win too) control it. Ctrl+Alt+Enter: full screen / window.";
+            ReceiveKeys = lt ? "Pelė ir visa klaviatūra valdo kitą kompiuterį (jei leista) · Ctrl+Alt+Enter – langas"
+                             : "Mouse and whole keyboard control the other PC (if allowed) · Ctrl+Alt+Enter: window";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
+            SendHeader = lt ? "RODYTI ŠĮ EKRANĄ KITAME KOMPIUTERYJE" : "SHOW THIS SCREEN ON ANOTHER PC";
+            GetHeader = lt ? "RODYTI KITO KOMPIUTERIO EKRANĄ ČIA" : "SHOW ANOTHER PC'S SCREEN HERE";
+            ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
             EncoderError = lt ? "Koderio klaida" : "Encoder error";
         }
     }
@@ -2418,6 +2434,12 @@ namespace TVCast
         // this PC as a receiver (Receiver.cs): the page's button, name and code, the picture window
         readonly FlatButton recvBtn = new FlatButton();
         readonly Label recvName = new Label(), recvCode = new Label(), recvKeys = new Label();
+        // ... and the top half: send this screen to another PC (PCs found by the search are listed only here)
+        readonly ComboBox pcBox = new ComboBox();
+        readonly FlatButton pcFindBtn = new FlatButton(), pcGoBtn = new FlatButton();
+        readonly FlatCheck pcSoundBox = new FlatCheck(), pcControlBox = new FlatCheck();
+        readonly Label sendHeader = new Label(), getHeader = new Label(), pcDivider = new Label();
+        bool castToPc;
         PcReceiver receiver;
         ViewerForm viewer;
         int lastShown;
@@ -2531,7 +2553,8 @@ namespace TVCast
             appPage = Page(Texts.TvSection, PX, PW, PH, out appHint, Texts.AppHint);
             webPage = Page(Texts.IpadSection, PX, PW, PH, out webHint, Texts.WebHint);
             screensPage = Page(Texts.ScreensSection, PX, PW, PH, out screensHint, Texts.ScreensHint);
-            recvPage = Page(Texts.ReceiveSection, PX, PW, PH, out recvHint, Texts.ReceiveHint);
+            recvPage = Page(Texts.ReceiveSection, PX, PW, PH, out recvHint, "");
+            recvHint.Visible = false; // the two halves have their own headers
             pages = new[] { appPage, webPage, screensPage, recvPage };
 
             // CastLink app (Android phone, tablet or TV)
@@ -2611,24 +2634,60 @@ namespace TVCast
             screensPage.Controls.AddRange(new Control[] { CaptionIcon(Icons.Monitor, screenLabel), screenLabel, screenBox,
                 extendTitle, extendSteps, addScreenBtn, displayBtn });
 
-            // this PC as a receiver: its name (what the other PC finds), the pairing code, the button
+            // this PC and other PCs: top half sends this screen to another PC, bottom half waits
+            // for another PC to show its screen here
+            Font headerFont = new Font("Segoe UI Semibold", 8.5f);
+            sendHeader.Text = Texts.SendHeader;
+            sendHeader.Font = headerFont;
+            sendHeader.Location = Ui.P(16, 50);
+            sendHeader.AutoSize = true;
+            pcBox.Location = Ui.P(16, 72);
+            pcBox.Width = Ui.S(PW - 32 - 124);
+            pcFindBtn.Text = Texts.Find;
+            pcFindBtn.Glyph = Icons.Search;
+            pcFindBtn.Location = Ui.P(PW - 16 - 116, 70);
+            pcFindBtn.Size = new Size(Ui.S(116), Ui.S(32));
+            pcFindBtn.Click += delegate { Search(); };
+            pcSoundBox.Text = Texts.Sound;
+            pcSoundBox.Glyph = Icons.Volume;
+            pcSoundBox.Location = Ui.P(16, 110);
+            pcControlBox.Text = Texts.AllowControl;
+            pcControlBox.Glyph = Icons.Touch;
+            pcControlBox.Location = Ui.P(16, 138);
+            pcSoundBox.Checked = pcControlBox.Checked = true;
+            pcControlBox.CheckedChanged += delegate { if (caster != null && castToPc) caster.AllowControl = pcControlBox.Checked; };
+            pcGoBtn.Text = Texts.ShowPc;
+            pcGoBtn.Glyph = Icons.Play;
+            pcGoBtn.Font = goBtn.Font;
+            pcGoBtn.Location = Ui.P(16, 170);
+            pcGoBtn.Size = new Size(Ui.S(PW - 32), Ui.S(38));
+            pcGoBtn.Click += delegate { Toggle(true); };
+            pcDivider.AutoSize = false;
+            pcDivider.SetBounds(Ui.S(16), Ui.S(222), Ui.S(PW - 32), 1);
+            getHeader.Text = Texts.GetHeader;
+            getHeader.Font = headerFont;
+            getHeader.Location = Ui.P(16, 234);
+            getHeader.AutoSize = true;
             recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
-            recvName.Location = Ui.P(16, 104);
+            recvName.Location = Ui.P(16, 256);
             recvName.AutoSize = true;
             recvName.Font = new Font("Segoe UI Semibold", 11f);
-            recvCode.Location = Ui.P(16, 140);
-            recvCode.AutoSize = true;
-            recvCode.Font = new Font("Segoe UI Semibold", 22f);
+            recvCode.Location = Ui.P(PW - 16 - 180, 248);
+            recvCode.Size = new Size(Ui.S(180), Ui.S(40));
+            recvCode.TextAlign = ContentAlignment.MiddleRight;
+            recvCode.Font = new Font("Segoe UI Semibold", 20f);
             recvKeys.Text = Texts.ReceiveKeys;
-            recvKeys.Location = Ui.P(16, PH - 16 - 42 - 50);
-            recvKeys.Size = new Size(Ui.S(PW - 32), Ui.S(44));
+            recvKeys.Font = new Font("Segoe UI", 8.5f);
+            recvKeys.Location = Ui.P(16, 282);
+            recvKeys.AutoSize = true; // one line; a fixed height clipped the letters' tails
             recvBtn.Text = Texts.ReceiveStart;
             recvBtn.Glyph = Icons.Play;
             recvBtn.Font = goBtn.Font;
-            recvBtn.Location = goBtn.Location;
-            recvBtn.Size = goBtn.Size;
+            recvBtn.Location = Ui.P(16, PH - 16 - 38);
+            recvBtn.Size = new Size(Ui.S(PW - 32), Ui.S(38));
             recvBtn.Click += delegate { ToggleReceive(); };
-            recvPage.Controls.AddRange(new Control[] { recvName, recvCode, recvKeys, recvBtn });
+            recvPage.Controls.AddRange(new Control[] { sendHeader, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn,
+                pcDivider, getHeader, recvName, recvCode, recvKeys, recvBtn });
 
 
             // status card: a dot with the state line, grey details below
@@ -2701,11 +2760,17 @@ namespace TVCast
             findBtn.Style(Ui.Subtle, Ui.Ink);
             addScreenBtn.Style(Ui.Subtle, Ui.Ink);
             displayBtn.Style(Ui.Subtle, Ui.Ink);
-            bool tv = caster != null && web == null, ipad = web != null;
+            pcFindBtn.Style(Ui.Subtle, Ui.Ink);
+            bool tv = caster != null && web == null && !castToPc, pc = caster != null && web == null && castToPc, ipad = web != null, rx = receiver != null;
             goBtn.Glyph = tv ? Icons.Stop : Icons.Play;
             ipadBtn.Glyph = ipad ? Icons.Stop : Icons.Play;
-            goBtn.Style(tv ? Ui.Danger : Ui.Accent, tv ? (Ui.Dark ? Color.Black : Color.White) : Ui.AccentText);
-            ipadBtn.Style(ipad ? Ui.Danger : Ui.Accent, ipad ? (Ui.Dark ? Color.Black : Color.White) : Ui.AccentText);
+            pcGoBtn.Glyph = pc ? Icons.Stop : Icons.Play;
+            recvBtn.Glyph = rx ? Icons.Stop : Icons.Play;
+            Color stopInk = Ui.Dark ? Color.Black : Color.White;
+            goBtn.Style(tv ? Ui.Danger : Ui.Accent, tv ? stopInk : Ui.AccentText);
+            ipadBtn.Style(ipad ? Ui.Danger : Ui.Accent, ipad ? stopInk : Ui.AccentText);
+            pcGoBtn.Style(pc ? Ui.Danger : Ui.Accent, pc ? stopInk : Ui.AccentText);
+            recvBtn.Style(rx ? Ui.Danger : Ui.Accent, rx ? stopInk : Ui.AccentText);
         }
 
         /// <summary>colours of every control from Ui (after Ui.Load), dark title bar and combo box</summary>
@@ -2717,11 +2782,14 @@ namespace TVCast
             statusCard.BackColor = Ui.CardBg;
             foreach (Control c in new Control[] { subtitle, tvLabel, fpsBox, urlCaption, codeCaption, printLabel, detailLabel,
                 appHint, webHint, screensHint, screenLabel, extendSteps }) c.ForeColor = Ui.Muted;
-            foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle }) c.ForeColor = Ui.Ink;
+            foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle,
+                pcSoundBox, pcControlBox, recvName, recvCode }) c.ForeColor = Ui.Ink;
+            foreach (Control c in new Control[] { sendHeader, getHeader, recvKeys }) c.ForeColor = Ui.Muted;
+            pcDivider.BackColor = Ui.Subtle;
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
-            tvBox.BackColor = screenBox.BackColor = Ui.Field;
-            tvBox.ForeColor = screenBox.ForeColor = Ui.Ink;
+            tvBox.BackColor = screenBox.BackColor = pcBox.BackColor = Ui.Field;
+            tvBox.ForeColor = screenBox.ForeColor = pcBox.ForeColor = Ui.Ink;
             StyleButtons();
             if (IsHandleCreated) ThemeWindow();
             foreach (Control c in Controls) c.Invalidate(true);
@@ -2735,7 +2803,7 @@ namespace TVCast
             try { if (DwmSetWindowAttribute(Handle, 20, ref on, 4) != 0) DwmSetWindowAttribute(Handle, 19, ref on, 4); }
             catch (DllNotFoundException) { }
             // the combo box's arrow and list follow the "DarkMode_CFD" theme
-            try { SetWindowTheme(tvBox.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); SetWindowTheme(screenBox.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); }
+            try { foreach (ComboBox cb in new[] { tvBox, screenBox, pcBox }) SetWindowTheme(cb.Handle, Ui.Dark ? "DarkMode_CFD" : null, null); }
             catch (DllNotFoundException) { }
         }
 
@@ -2818,7 +2886,7 @@ namespace TVCast
         /// the search when the app opens only fills the list, the field stays empty</param>
         void Search(bool pick = true)
         {
-            findBtn.Enabled = false;
+            findBtn.Enabled = pcFindBtn.Enabled = false;
             Say(Texts.Searching, Ui.Waiting);
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -2826,9 +2894,14 @@ namespace TVCast
                 BeginInvoke((MethodInvoker)delegate
                 {
                     findBtn.Enabled = true;
+                    pcFindBtn.Enabled = true;
+                    // PCs go to the "This PC" page, TVs and phones to the CastLink app page
                     tvBox.Items.Clear();
-                    foreach (KeyValuePair<string, IPAddress> f in found) tvBox.Items.Add(f.Key + " (" + f.Value + ")");
-                    if (pick && found.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
+                    pcBox.Items.Clear();
+                    foreach (KeyValuePair<string, IPAddress> f in found)
+                        (Discovery.IsPc(f.Value) ? pcBox : tvBox).Items.Add(f.Key + " (" + f.Value + ")");
+                    if (pick && tvBox.Items.Count > 0 && (tvBox.Text.Length == 0 || caster == null)) tvBox.SelectedIndex = 0;
+                    if (pick && pcBox.Items.Count > 0 && (pcBox.Text.Length == 0 || caster == null)) pcBox.SelectedIndex = 0;
                     if (caster == null)
                         Say(found.Count > 0 ? string.Format(Texts.Found, found.Count) : Texts.NotFound,
                             found.Count > 0 ? Ui.Good : Ui.Waiting);
@@ -3087,8 +3160,7 @@ namespace TVCast
             receiver.Start();
             if (receiver.Error != null) { Say(receiver.Error, Ui.Danger); receiver.Dispose(); receiver = null; return; }
             recvBtn.Text = Texts.ReceiveStop;
-            recvBtn.Glyph = Icons.Stop;
-            recvBtn.Style(Ui.Danger, Ui.Dark ? Color.Black : Color.White);
+            StyleButtons();
             Say(string.Format(Texts.ReceiveWaiting, Environment.MachineName), Ui.Waiting);
         }
 
@@ -3099,8 +3171,7 @@ namespace TVCast
             receiver = null;
             recvCode.Text = "";
             recvBtn.Text = Texts.ReceiveStart;
-            recvBtn.Glyph = Icons.Play;
-            recvBtn.Style(Ui.Accent, Ui.AccentText);
+            StyleButtons();
         }
 
         void CloseViewer()
@@ -3166,9 +3237,12 @@ namespace TVCast
             web = null;
             goBtn.Text = Texts.Show;
             ipadBtn.Text = Texts.ShowIpad;
+            pcGoBtn.Text = Texts.ShowPc;
+            castToPc = false;
             StyleButtons();
             ipadMode = "";
-            findBtn.Enabled = soundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled = goBtn.Enabled = ipadBtn.Enabled = screenBox.Enabled = true;
+            findBtn.Enabled = pcFindBtn.Enabled = soundBox.Enabled = pcSoundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled
+                = goBtn.Enabled = pcGoBtn.Enabled = ipadBtn.Enabled = screenBox.Enabled = true;
         }
 
         void SaveAll()
@@ -3203,7 +3277,9 @@ namespace TVCast
             return screenBox.SelectedItem is ScreenInfo ? ((ScreenInfo)screenBox.SelectedItem).Key : savedScreen;
         }
 
-        void Toggle()
+        /// <param name="toPc">from the "This PC" page: to another PC (its own box and checkboxes);
+        /// otherwise the CastLink app page (TV, phone)</param>
+        void Toggle(bool toPc = false)
         {
             if (caster != null)
             {
@@ -3213,7 +3289,8 @@ namespace TVCast
                 if (homeRefused != null) { Say(homeRefused, Ui.Danger); homeRefused = null; }
                 return;
             }
-            IPAddress ip = ParseTv(tvBox.Text);
+            ComboBox box = toPc ? pcBox : tvBox;
+            IPAddress ip = ParseTv(box.Text);
             if (ip == null)
             {
                 Say(Texts.EnterIp, Ui.Danger);
@@ -3222,14 +3299,18 @@ namespace TVCast
             SaveAll();
             TVCast.Capture.Screen = SelectedScreen(); // (Capture alone is the Form's mouse-capture flag)
             if (!argFps || fpsBox.Checked != (Caster.FPS >= 120)) Caster.FPS = fpsBox.Checked ? 120 : 60;
-            caster = new Caster(ip, soundBox.Checked);
-            caster.TvName = Caster.NameOf(tvBox.Text); // to find it again when the USB cable is pulled
-            caster.AllowControl = controlBox.Checked; // a phone that shows the PC may control it
+            castToPc = toPc;
+            caster = new Caster(ip, (toPc ? pcSoundBox : soundBox).Checked);
+            caster.TvName = Caster.NameOf(box.Text); // to find it again when the USB cable is pulled
+            caster.AllowControl = (toPc ? pcControlBox : controlBox).Checked; // the device that shows this PC may control it
             caster.Start();
-            goBtn.Text = Texts.Stop;
-            goBtn.Focus();
+            FlatButton go = toPc ? pcGoBtn : goBtn;
+            go.Text = Texts.Stop;
+            go.Focus();
             StyleButtons();
-            findBtn.Enabled = soundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled = ipadBtn.Enabled = screenBox.Enabled = false;
+            findBtn.Enabled = pcFindBtn.Enabled = soundBox.Enabled = pcSoundBox.Enabled = webSoundBox.Enabled = fpsBox.Enabled
+                = ipadBtn.Enabled = screenBox.Enabled = false;
+            (toPc ? goBtn : pcGoBtn).Enabled = false; // one cast at a time
             lastFrames = lastBytes = 0;
             lastTick = Clock.Ms();
         }

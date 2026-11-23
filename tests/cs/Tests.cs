@@ -608,6 +608,7 @@ namespace TVCast.Tests
             Equal("Žalias phone", Discovery.NameReply(pkt, pkt.Length), "UTF-8 name");
             True(Discovery.NameReply(new byte[] { Proto.NAME }, 1) == null, "empty");
             True(Discovery.NameReply(new byte[] { Proto.PING, 65 }, 2) == null, "another packet");
+            Equal("MSI", Discovery.NameReply(new byte[] { Proto.PCNAME, 77, 83, 73 }, 4), "a PC receiver's answer reads the same");
         }
 
         static void TestUsbNetworkAskedUntilLimited()

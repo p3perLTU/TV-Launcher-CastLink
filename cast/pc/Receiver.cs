@@ -532,7 +532,7 @@ namespace TVCast
         {
             byte[] nm = System.Text.Encoding.UTF8.GetBytes(myName);
             byte[] b = new byte[1 + nm.Length];
-            b[0] = Proto.NAME;
+            b[0] = Proto.PCNAME; // a PC: the caster lists it under "This PC", not with the TVs and phones
             Buffer.BlockCopy(nm, 0, b, 1, nm.Length);
             return b;
         }
