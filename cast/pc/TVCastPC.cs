@@ -2102,8 +2102,8 @@ namespace TVCast
                              : "Mouse and keyboard control the other PC (if it allows it). Ctrl+Alt+Enter: window.";
             ReceiveOff = lt ? "Šis kompiuteris ryšio nelaukia" : "This PC is not receiving";
             ReceivePackets = lt ? "gauta {0}, atmesta {1}" : "received {0}, refused {1}";
-            SendHeader = lt ? "SIŲSTI EKRANĄ" : "SEND SCREEN";
-            GetHeader = lt ? "GAUTI EKRANĄ" : "RECEIVE SCREEN";
+            SendHeader = lt ? "Siųsti ekraną" : "Send screen";
+            GetHeader = lt ? "Gauti ekraną" : "Receive screen";
             ShowPc = lt ? "Rodyti šį ekraną" : "Show this screen";
             OtherPc = lt ? "kitas kompiuteris" : "another PC";
             PcControl = lt ? "Leisti valdyti" : "Allow control";
@@ -2336,7 +2336,7 @@ namespace TVCast
     {
         public const string Phone = "\uE8EA", Globe = "\uE774", Monitor = "\uE7F4", Settings = "\uE713",
             Play = "\uE768", Stop = "\uE71A", Search = "\uE721", Add = "\uE710",
-            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896";
+            Volume = "\uE767", Touch = "\uE7C9", Speed = "\uE916", Lock = "\uE72E", Link = "\uE71B", Download = "\uE896", Upload = "\uE898";
         static string family;
         static readonly Dictionary<float, Font> cache = new Dictionary<float, Font>();
 
@@ -2351,6 +2351,31 @@ namespace TVCast
             Font font;
             if (!cache.TryGetValue(points, out font)) cache[points] = font = new Font(family, points);
             return font;
+        }
+    }
+
+    /// <summary>a rounded colour tile with a white icon, the badge of a card's title</summary>
+    sealed class GlyphTile : Control
+    {
+        public string Glyph;
+        public Color From, To;
+
+        public GlyphTile()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Page);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (System.Drawing.Drawing2D.GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Width * 0.26f))
+            using (System.Drawing.Drawing2D.LinearGradientBrush b = new System.Drawing.Drawing2D.LinearGradientBrush(
+                new PointF(0, 0), new PointF(Width, Height), From, To))
+                g.FillPath(b, p);
+            TextRenderer.DrawText(g, Glyph, Icons.Font(13f), ClientRectangle, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 
@@ -2640,18 +2665,18 @@ namespace TVCast
             // this PC and other PCs: two cards side by side, left sends this screen to another PC,
             // right waits for another PC to show its screen here; each card names both ends
             const int CW = (PW - 32 - 12) / 2, CH = PH - 50 - 16, CI = CW - 28;
-            Font headerFont = new Font("Segoe UI Semibold", 8.5f), dirFont = new Font("Segoe UI Semibold", 11f);
+            Font headerFont = new Font("Segoe UI Semibold", 12.5f), dirFont = new Font("Segoe UI", 9f);
             sendCard.Location = Ui.P(16, 50);
             sendCard.Size = new Size(Ui.S(CW), Ui.S(CH));
             getCard.Location = Ui.P(16 + CW + 12, 50);
             getCard.Size = sendCard.Size;
             sendHeader.Text = Texts.SendHeader;
             sendHeader.Font = headerFont;
-            sendHeader.Location = Ui.P(14, 14);
+            sendHeader.Location = Ui.P(62, 12);
             sendHeader.AutoSize = true;
             sendDir.Font = dirFont;
             sendDir.AutoEllipsis = true;
-            sendDir.SetBounds(Ui.S(14), Ui.S(34), Ui.S(CI), Ui.S(24));
+            sendDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
             pcBox.Location = Ui.P(14, 68);
             pcBox.Width = Ui.S(CI - 40);
             pcFindBtn.Text = "";
@@ -2675,14 +2700,18 @@ namespace TVCast
             pcGoBtn.Location = Ui.P(14, CH - 14 - 38);
             pcGoBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             pcGoBtn.Click += delegate { Toggle(true); };
-            sendCard.Controls.AddRange(new Control[] { sendHeader, sendDir, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
+            GlyphTile sendTile = new GlyphTile { Glyph = Icons.Upload, From = Color.FromArgb(56, 132, 255), To = Color.FromArgb(124, 77, 255) };
+            sendTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
+            GlyphTile getTile = new GlyphTile { Glyph = Icons.Download, From = Color.FromArgb(0, 170, 140), To = Color.FromArgb(40, 130, 230) };
+            getTile.SetBounds(Ui.S(14), Ui.S(14), Ui.S(40), Ui.S(40));
+            sendCard.Controls.AddRange(new Control[] { sendTile, sendHeader, sendDir, pcBox, pcFindBtn, pcSoundBox, pcControlBox, pcGoBtn });
             getHeader.Text = Texts.GetHeader;
             getHeader.Font = headerFont;
-            getHeader.Location = Ui.P(14, 14);
+            getHeader.Location = Ui.P(62, 12);
             getHeader.AutoSize = true;
             getDir.Font = dirFont;
             getDir.AutoEllipsis = true;
-            getDir.SetBounds(Ui.S(14), Ui.S(34), Ui.S(CI), Ui.S(24));
+            getDir.SetBounds(Ui.S(62), Ui.S(36), Ui.S(CI - 48), Ui.S(20));
             recvName.Text = string.Format(Texts.ReceiveAddress, Environment.MachineName);
             recvName.SetBounds(Ui.S(14), Ui.S(68), Ui.S(CI), Ui.S(40));
             recvCode.SetBounds(Ui.S(14), Ui.S(104), Ui.S(CI), Ui.S(40));
@@ -2697,7 +2726,7 @@ namespace TVCast
             recvBtn.Location = Ui.P(14, CH - 14 - 38);
             recvBtn.Size = new Size(Ui.S(CI), Ui.S(38));
             recvBtn.Click += delegate { ToggleReceive(); };
-            getCard.Controls.AddRange(new Control[] { getHeader, getDir, recvName, recvCode, recvKeys, recvBtn });
+            getCard.Controls.AddRange(new Control[] { getTile, getHeader, getDir, recvName, recvCode, recvKeys, recvBtn });
             recvPage.Controls.AddRange(new Control[] { sendCard, getCard });
             ShowDirections();
 
@@ -2795,8 +2824,8 @@ namespace TVCast
             foreach (Control c in new Control[] { subtitle, tvLabel, fpsBox, urlCaption, codeCaption, printLabel, detailLabel,
                 appHint, webHint, screensHint, screenLabel, extendSteps }) c.ForeColor = Ui.Muted;
             foreach (Control c in new Control[] { soundBox, controlBox, webSoundBox, webControlBox, codeLabel, stateLabel, extendTitle,
-                pcSoundBox, pcControlBox, recvName, recvCode, sendDir, getDir }) c.ForeColor = Ui.Ink;
-            foreach (Control c in new Control[] { sendHeader, getHeader, recvKeys }) c.ForeColor = Ui.Muted;
+                pcSoundBox, pcControlBox, recvName, recvCode, sendHeader, getHeader }) c.ForeColor = Ui.Ink;
+            foreach (Control c in new Control[] { sendDir, getDir, recvKeys }) c.ForeColor = Ui.Muted;
             sendCard.BackColor = getCard.BackColor = Ui.Field;
             urlLabel.ForeColor = Ui.Accent;
             foreach (Label l in captionIcons) l.ForeColor = Ui.Muted;
